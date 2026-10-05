@@ -36,6 +36,16 @@ jobs:
             -scheme swift-in-app-purchase-Package \
             -destination 'platform=macOS' \
             | xcbeautify --renderer github-actions
+      # Builds the example app against the local package for the iOS Simulator. Its tests are not
+      # run here, which keeps this lane short.
+      - name: Build example app
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project Examples/PurchaseExample/PurchaseExample.xcodeproj \
+            -scheme PurchaseExample \
+            -destination 'generic/platform=iOS Simulator' \
+            | xcbeautify --renderer github-actions
 
   lint:
     name: swift-format lint
@@ -45,4 +55,4 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Lint
-        run: swift format lint --strict --recursive Package.swift Sources Tests
+        run: swift format lint --strict --recursive Package.swift Sources Tests Examples
