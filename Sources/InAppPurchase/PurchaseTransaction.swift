@@ -30,7 +30,20 @@ public struct PurchaseTransaction: Hashable, Identifiable, Sendable {
 
   /// Creates a transaction record.
   ///
-  /// - Parameter originalID: The first transaction in the renewal chain. Pass `nil` to use `id`.
+  /// - Parameters:
+  ///   - appAccountToken: The token the app attached to the purchase, or `nil` if it attached none.
+  ///   - expirationDate: When a subscription expires, or `nil` for a product that does not.
+  ///   - id: The transaction's unique identifier.
+  ///   - isUpgraded: Whether the customer upgraded to another subscription in the same group.
+  ///   - originalID: The first transaction in the renewal chain. Pass `nil` to use `id`.
+  ///   - productID: The identifier of the product purchased.
+  ///   - productType: What kind of product was purchased.
+  ///   - purchaseDate: When the purchase was made. Defaults to now.
+  ///   - quantity: How many of the product were purchased.
+  ///   - revocationDate: When the App Store refunded or revoked the purchase, or `nil` while it
+  ///     stands.
+  ///   - storeKitTransaction: The StoreKit transaction this value was read from, or `nil` for one
+  ///     a test or preview constructs.
   public init(
     appAccountToken: UUID? = nil,
     expirationDate: Date? = nil,

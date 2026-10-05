@@ -16,6 +16,21 @@ package typealias Sleep = @Sendable (Duration) async throws -> Void
 /// earlier launch, goes through one handler, one at a time, and is finished only after the handler
 /// returns. A transaction whose handler threw is delivered again on the next ``refresh()`` or
 /// launch, so the handler must be idempotent on the transaction's `id`.
+///
+/// ```swift
+/// @main
+/// struct ExampleApp: App {
+///   @State private var store = PurchaseStore(productIDs: ["pro.lifetime", "pro.monthly"])
+///
+///   var body: some Scene {
+///     WindowGroup {
+///       ContentView()
+///         .environment(store)
+///         .task { await store.start { event in /* Deliver the content. */ } }
+///     }
+///   }
+/// }
+/// ```
 @MainActor
 @Observable
 public final class PurchaseStore {
@@ -133,6 +148,19 @@ public final class PurchaseStore {
   /// never overlap. If `handler` throws, the transaction stays unfinished and is delivered again
   /// on the next ``refresh()`` or launch, so `handler` must be idempotent on the transaction's
   /// `id`. Otherwise the store behaves as ``start()`` describes.
+  ///
+  /// ```swift
+  /// await store.start { event in
+  ///   switch event {
+  ///   case .purchased(let transaction):
+  ///     // Grant the content once per transaction.id, and save before returning.
+  ///     try grant(transaction)
+  ///   case .revoked(let transaction):
+  ///     // A revocation carries the id of the purchase it revokes.
+  ///     try revoke(transaction)
+  ///   }
+  /// }
+  /// ```
   ///
   /// `handler` must not call ``refresh()``, ``start(handling:)``, or ``purchase(_:options:)`` on
   /// the store: its own delivery is at the head of the queue those wait on. From inside it, a

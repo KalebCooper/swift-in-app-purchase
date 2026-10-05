@@ -6,6 +6,7 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+- Added documentation articles: Getting Started, Delivering Transactions, Gating Features, and Handling Errors in `InAppPurchase`, Building a Paywall in `InAppPurchaseUI`, and Testing Purchases in `InAppPurchaseTesting`. `PurchaseStore`, `PurchaseStore.start(handling:)`, and `Entitlement` gain code examples, and every parameter of `PurchaseTransaction.init` is documented.
 - Added an example app, `Examples/PurchaseExample`. It sells tips, Pro as a one-time purchase or a subscription, and consumable coins through one `PurchaseStore` and one transaction handler, runs in the simulator against a bundled StoreKit configuration with no signing, and tests its coin delivery with `MockPurchaseClient`.
 - Documented purchase integration: the README now covers starting the store, the delivery rules, a tip jar, subscription gating, consumable coins, testing with `MockPurchaseClient`, and previews with `PurchaseStore.preview`, and each module's documentation catalog lists its public types.
 - `InAppPurchaseUI` replaces `TipJarView` and `TipJarCopy` with a bridge to SwiftUI. `PurchaseStore.purchase(_:using:options:)` purchases through the view's `@Environment(\.purchase)`, which is the purchase path on visionOS, and `refreshingPurchases(_:)` refreshes the store whenever the scene becomes active. For a ready-made storefront, use StoreKit's `StoreView`.

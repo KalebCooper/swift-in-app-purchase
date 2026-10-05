@@ -62,7 +62,7 @@ public final class MockPurchaseClient: PurchaseClient, Sendable {
   }
 
   /// How every purchase ends: an outcome to return or an error to throw. Returns
-  /// ``InAppPurchase/PurchaseOutcome/userCancelled`` by default.
+  /// ``/InAppPurchase/PurchaseOutcome/userCancelled`` by default.
   public var purchaseResult: Result<PurchaseOutcome, PurchaseError> {
     get { state.withLock { $0.purchaseResult } }
     set { state.withLock { $0.purchaseResult = newValue } }
