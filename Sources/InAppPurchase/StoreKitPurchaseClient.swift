@@ -36,7 +36,9 @@ struct StoreKitPurchaseClient: PurchaseClient {
   ///
   /// A product not loaded from the App Store throws ``PurchaseError/Code/productUnavailable``. On
   /// visionOS a purchase needs the scene's purchaser; without one this throws
-  /// ``PurchaseError/Code/invalidPresentationContext``.
+  /// ``PurchaseError/Code/invalidPresentationContext``. A cancellation StoreKit reports by throwing
+  /// rather than returning is returned as ``PurchaseOutcome/userCancelled``, so a caller sees every
+  /// cancellation in one place.
   func purchase(
     _ product: PurchaseProduct,
     options: Set<Product.PurchaseOption>,
@@ -45,8 +47,13 @@ struct StoreKitPurchaseClient: PurchaseClient {
     guard let storeKitProduct = product.storeKitProduct else {
       throw PurchaseError(.productUnavailable)
     }
-    let result = try await purchaseResult(
-      of: storeKitProduct, options: options, purchaser: purchaser)
+    let result: Product.PurchaseResult
+    do {
+      result = try await purchaseResult(of: storeKitProduct, options: options, purchaser: purchaser)
+    } catch {
+      if error.code == .userCancelled { return .userCancelled }
+      throw error
+    }
     switch result {
     case .pending:
       return .pending

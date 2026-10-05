@@ -4,7 +4,7 @@ import InAppPurchaseTesting
 import Testing
 
 @MainActor
-@Suite struct PurchaseStoreTests {
+@Suite(.timeLimit(.minutes(1))) struct PurchaseStoreTests {
   private let purchaseDate = Date(timeIntervalSince1970: 1_800_000_000)
 
   private let small = PurchaseProduct(
@@ -105,6 +105,64 @@ import Testing
     #expect(recorder.events.map(\.purchased) == [tip(1), tip(2)])
   }
 
+  @Test func anUpdateForATransactionStillInTheHandlerIsMergedIntoThatDelivery() async throws {
+    let mock = MockPurchaseClient()
+    mock.unfinishedTransactions = [tip(1)]
+    let recorder = HandlerRecorder(mock: mock)
+    let gate = Gate()
+    recorder.gateForFirstInvocation = gate
+    let store = makeStore(mock)
+    var starts = recorder.starts.makeAsyncIterator()
+
+    let started = Task { await store.start(handling: recorder.handle) }
+    _ = await starts.next()
+    mock.send(tip(1))
+    mock.send(tip(2))
+    for _ in 0..<10 { await Task.yield() }
+    gate.open()
+    await started.value
+
+    #expect(try await mock.nextFinishedTransaction() == tip(1))
+    #expect(try await mock.nextFinishedTransaction() == tip(2))
+    #expect(recorder.events.map(\.purchased) == [tip(1), tip(2)])
+  }
+
+  @Test func startComputesEntitlementsBeforeTheHandlerDeliversUnfinishedTransactions() async {
+    let mock = MockPurchaseClient()
+    mock.entitlements = [lifetime(1)]
+    mock.unfinishedTransactions = [tip(2)]
+    let recorder = HandlerRecorder(mock: mock)
+    let gate = Gate()
+    recorder.gateForFirstInvocation = gate
+    let store = makeStore(mock)
+    var starts = recorder.starts.makeAsyncIterator()
+
+    let started = Task { await store.start(handling: recorder.handle) }
+    _ = await starts.next()
+
+    #expect(store.purchasedProductIDs == ["pro.lifetime"])
+
+    gate.open()
+    await started.value
+  }
+
+  @Test func aHandlerThatRefreshesTheStoreReturnsAndTheQueueKeepsMoving() async throws {
+    let mock = MockPurchaseClient()
+    mock.unfinishedTransactions = [tip(1)]
+    let recorder = HandlerRecorder(mock: mock)
+    let store = makeStore(mock)
+    recorder.actionForFirstInvocation = { await store.refresh() }
+
+    await store.start(handling: recorder.handle)
+    #expect(recorder.events.map(\.purchased) == [tip(1)])
+    #expect(mock.finishedTransactions == [tip(1)])
+
+    mock.send(tip(2))
+
+    #expect(try await mock.nextFinishedTransaction() == tip(1))
+    #expect(try await mock.nextFinishedTransaction() == tip(2))
+  }
+
   @Test func eventsArrivingTogetherRunTheHandlerOneAfterTheOther() async throws {
     let mock = MockPurchaseClient()
     let recorder = HandlerRecorder(mock: mock)
@@ -126,16 +184,19 @@ import Testing
 
     #expect(try await mock.nextFinishedTransaction() == tip(1))
     #expect(try await mock.nextFinishedTransaction() == tip(2))
+    #expect(recorder.finishedAtInvocation == [[], [tip(1)]])
     #expect(recorder.maxActive == 1)
   }
 
   @Test func aRevocationReachesTheHandlerAsRevokedAndDropsTheEntitlement() async throws {
     let mock = MockPurchaseClient()
     mock.entitlements = [lifetime(1)]
+    mock.unfinishedTransactions = [lifetime(1)]
     let recorder = HandlerRecorder(mock: mock)
     let store = makeStore(mock)
     await store.start(handling: recorder.handle)
     #expect(store.purchasedProductIDs == ["pro.lifetime"])
+    #expect(recorder.events.map(\.purchased) == [lifetime(1)])
     let revocation = PurchaseTransaction(
       id: 1,
       productID: "pro.lifetime",
@@ -147,8 +208,13 @@ import Testing
     mock.entitlements = []
     mock.send(revocation)
 
+    #expect(try await mock.nextFinishedTransaction() == lifetime(1))
     #expect(try await mock.nextFinishedTransaction() == revocation)
-    #expect(recorder.events.map(\.revoked) == [revocation])
+    #expect(recorder.events.map(\.purchased) == [lifetime(1), nil])
+    #expect(recorder.events.map(\.revoked) == [nil, revocation])
+    for await ids in Observations({ @MainActor in store.purchasedProductIDs }) {
+      if ids.isEmpty { break }
+    }
     #expect(store.purchasedProductIDs.isEmpty)
   }
 
@@ -182,10 +248,10 @@ import Testing
     let recorder = HandlerRecorder(mock: mock)
 
     do {
+      mock.unfinishedTransactions = [tip(1)]
       let store = makeStore(mock)
       await store.start(handling: recorder.handle)
-      mock.send(tip(1))
-      _ = try await mock.nextFinishedTransaction()
+      #expect(mock.finishedTransactions == [tip(1)])
       #expect(mock.activeUpdateSubscriptions == 1)
     }
 
@@ -210,6 +276,59 @@ import Testing
     #expect(purchased == lifetime(1))
     #expect(recorder.events.map(\.purchased) == [lifetime(1)])
     #expect(mock.finishedTransactions == [lifetime(1)])
+  }
+
+  @Test func aPurchaseWaitsForAnUpdateAlreadyInTheHandler() async throws {
+    let mock = MockPurchaseClient()
+    mock.purchaseResult = .success(.success(lifetime(2)))
+    let recorder = HandlerRecorder(mock: mock)
+    let gate = Gate()
+    recorder.gateForFirstInvocation = gate
+    let store = makeStore(mock)
+    await store.start(handling: recorder.handle)
+    var starts = recorder.starts.makeAsyncIterator()
+
+    mock.send(tip(1))
+    _ = await starts.next()
+    let product = pro
+    let purchase = Task { try await store.purchase(product) }
+    for _ in 0..<10 { await Task.yield() }
+    #expect(recorder.events.map(\.purchased) == [tip(1)])
+
+    gate.open()
+    _ = try await purchase.value
+
+    #expect(recorder.events.map(\.purchased) == [tip(1), lifetime(2)])
+    #expect(recorder.finishedAtInvocation == [[], [tip(1)]])
+    #expect(recorder.maxActive == 1)
+  }
+
+  @Test func aPurchaseMergedIntoAnInFlightDeliverySharesItsResult() async {
+    let mock = MockPurchaseClient()
+    mock.purchaseResult = .success(.success(lifetime(1)))
+    let recorder = HandlerRecorder(mock: mock)
+    let gate = Gate()
+    recorder.gateForFirstInvocation = gate
+    let store = makeStore(mock)
+    await store.start(handling: recorder.handle)
+    var starts = recorder.starts.makeAsyncIterator()
+
+    mock.send(lifetime(1))
+    _ = await starts.next()
+    let product = pro
+    let purchase = Task { try await store.purchase(product) }
+    for _ in 0..<10 { await Task.yield() }
+    recorder.error = HandlerFailure()
+    gate.open()
+
+    do {
+      _ = try await purchase.value
+      Issue.record("purchase(_:) did not throw")
+    } catch {
+      #expect((error as? PurchaseError)?.code == .deliveryFailed)
+    }
+    #expect(recorder.events.map(\.purchased) == [lifetime(1)])
+    #expect(mock.finishedTransactions.isEmpty)
   }
 
   @Test func aPurchaseWhoseHandlerThrowsFailsWithDeliveryFailedAndStaysUnfinished() async {
@@ -331,7 +450,9 @@ import Testing
     )
   }
 
-  private var expiredMonthly: PurchaseTransaction {
+  /// A subscription StoreKit still lists although its paid period ended, as during a billing grace
+  /// period.
+  private var monthlyInGrace: PurchaseTransaction {
     PurchaseTransaction(
       expirationDate: Date(timeIntervalSinceNow: -60),
       id: 24,
@@ -339,6 +460,29 @@ import Testing
       productType: .autoRenewable,
       purchaseDate: purchaseDate
     )
+  }
+
+  private var monthlySoon: PurchaseTransaction {
+    PurchaseTransaction(
+      expirationDate: Date(timeIntervalSinceNow: 3_600),
+      id: 20,
+      productID: "pro.monthly",
+      productType: .autoRenewable
+    )
+  }
+
+  private var yearly: PurchaseTransaction {
+    PurchaseTransaction(
+      expirationDate: Date(timeIntervalSinceNow: 7_200),
+      id: 26,
+      productID: "pro.yearly",
+      productType: .autoRenewable
+    )
+  }
+
+  private func makeTimedStore(_ mock: MockPurchaseClient, sleep: ControlledSleep) -> PurchaseStore {
+    PurchaseStore(
+      client: mock, productIDs: ["pro.monthly", "pro.yearly"], sleep: sleep.sleep(for:))
   }
 
   @Test func currentPurchasesAndSubscriptionsCountAsPurchased() async {
@@ -358,20 +502,44 @@ import Testing
     #expect(store.purchasedProductIDs == ["pro.lifetime", "pro.monthly"])
   }
 
-  @Test(arguments: ["revoked", "upgraded", "non-renewing", "expired"])
+  @Test(arguments: ["revoked", "upgraded", "non-renewing"])
   func excludesFromPurchased(_ kind: String) async {
     let mock = MockPurchaseClient()
     switch kind {
     case "revoked": mock.entitlements = [revokedLifetime]
     case "upgraded": mock.entitlements = [upgradedMonthly]
-    case "non-renewing": mock.entitlements = [season]
-    default: mock.entitlements = [expiredMonthly]
+    default: mock.entitlements = [season]
     }
     let store = makeStore(mock)
 
     await store.start()
 
     #expect(store.purchasedProductIDs.isEmpty)
+  }
+
+  @Test func aSubscriptionTheStoreNoLongerListsIsNotPurchased() async {
+    let mock = MockPurchaseClient()
+    mock.entitlements = [monthly]
+    let store = makeStore(mock, productIDs: ["pro.monthly"])
+    await store.start()
+    #expect(store.purchasedProductIDs == ["pro.monthly"])
+
+    mock.entitlements = []
+    await store.refresh()
+
+    #expect(store.purchasedProductIDs.isEmpty)
+  }
+
+  @Test func aListedSubscriptionPastItsExpirationStaysPurchasedAndSchedulesNoTimer() async {
+    let mock = MockPurchaseClient()
+    mock.entitlements = [monthlyInGrace]
+    let sleep = ControlledSleep()
+    let store = makeTimedStore(mock, sleep: sleep)
+
+    await store.start()
+
+    #expect(store.purchasedProductIDs == ["pro.monthly"])
+    #expect(sleep.requestCount == 0)
   }
 
   @Test func isEntitledWhenAnyOfTheEntitlementsProductsIsPurchased() async {
@@ -394,23 +562,10 @@ import Testing
 
   @Test func theExpiryTimerRecomputesAtTheEarliestExpiration() async {
     let mock = MockPurchaseClient()
-    let later = Date(timeIntervalSinceNow: 7_200)
-    let monthlySoon = PurchaseTransaction(
-      expirationDate: Date(timeIntervalSinceNow: 3_600),
-      id: 20,
-      productID: "pro.monthly",
-      productType: .autoRenewable
-    )
-    let yearly = PurchaseTransaction(
-      expirationDate: later,
-      id: 26,
-      productID: "pro.yearly",
-      productType: .autoRenewable
-    )
+    let yearly = yearly
     mock.entitlements = [monthlySoon, yearly]
     let sleep = ControlledSleep()
-    let store = PurchaseStore(
-      client: mock, productIDs: ["pro.monthly", "pro.yearly"], sleep: sleep.sleep(for:))
+    let store = makeTimedStore(mock, sleep: sleep)
     await store.start()
     #expect(store.purchasedProductIDs == ["pro.monthly", "pro.yearly"])
 
@@ -426,24 +581,81 @@ import Testing
     #expect(store.purchasedProductIDs == ["pro.yearly"])
   }
 
+  @Test func anEarlierExpirationReplacesThePendingTimer() async {
+    let mock = MockPurchaseClient()
+    mock.entitlements = [yearly]
+    let sleep = ControlledSleep()
+    let store = makeTimedStore(mock, sleep: sleep)
+    await store.start()
+    let first = await sleep.nextRequest()
+    #expect(first > .seconds(7_100) && first <= .seconds(7_200))
+
+    mock.entitlements = [monthlySoon, yearly]
+    await store.refresh()
+
+    #expect(sleep.cancelledSleepCount == 1)
+    let second = await sleep.nextRequest()
+    #expect(second > .seconds(3_500) && second <= .seconds(3_600))
+  }
+
+  @Test func losingEverySubscriptionCancelsThePendingTimer() async {
+    let mock = MockPurchaseClient()
+    mock.entitlements = [yearly]
+    let sleep = ControlledSleep()
+    let store = makeTimedStore(mock, sleep: sleep)
+    await store.start()
+    _ = await sleep.nextRequest()
+
+    mock.entitlements = []
+    await store.refresh()
+
+    #expect(store.purchasedProductIDs.isEmpty)
+    #expect(sleep.cancelledSleepCount == 1)
+    #expect(sleep.requestCount == 1)
+  }
+
   @Test func anOlderRecomputeThatFinishesLateDoesNotOverwriteANewerOne() async {
     let mock = MockPurchaseClient()
     mock.entitlements = [lifetime(1)]
-    let client = GatedEntitlementsClient(mock: mock, gatedCall: 2)
+    let client = GatedEntitlementsClient(mock: mock, gatedCalls: [2])
     let store = PurchaseStore(client: client, productIDs: ["pro.lifetime", "pro.monthly"])
     await store.start()
     #expect(store.purchasedProductIDs == ["pro.lifetime"])
 
     mock.entitlements = []
     let older = Task { await store.refresh() }
-    await client.gate.arrival()
+    await client.gate(forCall: 2).arrival()
     mock.entitlements = [monthly]
     await store.refresh()
     #expect(store.purchasedProductIDs == ["pro.monthly"])
 
-    client.gate.open()
+    client.gate(forCall: 2).open()
     await older.value
 
+    #expect(store.purchasedProductIDs == ["pro.monthly"])
+  }
+
+  @Test func restoreReturnsTheNewestEntitlementsWhenANewerRecomputeIsInFlight() async throws {
+    let mock = MockPurchaseClient()
+    mock.entitlements = [lifetime(1)]
+    let client = GatedEntitlementsClient(mock: mock, gatedCalls: [2, 3])
+    let store = PurchaseStore(client: client, productIDs: ["pro.lifetime", "pro.monthly"])
+    await store.start()
+
+    mock.entitlements = []
+    let older = Task { try await store.restore() }
+    await client.gate(forCall: 2).arrival()
+    mock.entitlements = [monthly]
+    let newer = Task { await store.refresh() }
+    await client.gate(forCall: 3).arrival()
+
+    client.gate(forCall: 2).open()
+    for _ in 0..<10 { await Task.yield() }
+    client.gate(forCall: 3).open()
+    await newer.value
+    let restored = try await older.value
+
+    #expect(restored == ["pro.monthly"])
     #expect(store.purchasedProductIDs == ["pro.monthly"])
   }
 

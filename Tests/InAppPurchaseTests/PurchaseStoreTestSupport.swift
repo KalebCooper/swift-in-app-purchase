@@ -53,13 +53,21 @@ final class Gate: Sendable {
 /// A sleep a test drives: it records each requested duration and sleeps until woken.
 final class ControlledSleep: Sendable {
   private struct State {
+    var cancelledSleeps = 0
     var nextToken = 0
     var requestWaiters: [CheckedContinuation<Duration, Never>] = []
+    var requests = 0
     var sleepers: [Int: CheckedContinuation<Void, any Error>] = [:]
     var unreturnedRequests: [Duration] = []
   }
 
   private let state = Mutex(State())
+
+  /// How many sleeps in progress were cancelled.
+  var cancelledSleepCount: Int { state.withLock { $0.cancelledSleeps } }
+
+  /// How many sleeps were requested.
+  var requestCount: Int { state.withLock { $0.requests } }
 
   /// Returns the next requested duration, waiting for the request if it has not happened yet.
   func nextRequest() async -> Duration {
@@ -88,6 +96,7 @@ final class ControlledSleep: Sendable {
             return nil
           }
           state.sleepers[token] = continuation
+          state.requests += 1
           if state.requestWaiters.isEmpty {
             state.unreturnedRequests.append(duration)
             return nil
@@ -97,8 +106,12 @@ final class ControlledSleep: Sendable {
         requestWaiter?.resume(returning: duration)
       }
     } onCancel: {
-      state.withLock { $0.sleepers.removeValue(forKey: token) }?.resume(
-        throwing: CancellationError())
+      let sleeper: CheckedContinuation<Void, any Error>? = state.withLock { state in
+        let sleeper = state.sleepers.removeValue(forKey: token)
+        if sleeper != nil { state.cancelledSleeps += 1 }
+        return sleeper
+      }
+      sleeper?.resume(throwing: CancellationError())
     }
   }
 
@@ -112,18 +125,24 @@ final class ControlledSleep: Sendable {
   }
 }
 
-/// A client that answers from a mock but holds one `currentEntitlements()` reply at a gate after
-/// reading it, so a test can make an older recompute land after a newer one.
+/// A client that answers from a mock but holds chosen `currentEntitlements()` replies at a gate
+/// after reading them, so a test can make an older recompute land after a newer one.
 final class GatedEntitlementsClient: PurchaseClient {
   private let callCount = Mutex(0)
-  let gate = Gate()
-  let gatedCall: Int
+  private let gates: [Int: Gate]
   let mock: MockPurchaseClient
 
-  /// Gates the reply of the `gatedCall`th call to `currentEntitlements()`, counting from one.
-  init(mock: MockPurchaseClient, gatedCall: Int) {
-    self.gatedCall = gatedCall
+  /// Gates the reply of every call to `currentEntitlements()` whose number, counting from one, is
+  /// in `gatedCalls`.
+  init(mock: MockPurchaseClient, gatedCalls: Set<Int>) {
+    self.gates = Dictionary(uniqueKeysWithValues: gatedCalls.map { ($0, Gate()) })
     self.mock = mock
+  }
+
+  /// The gate holding the reply of the `call`th call, which must be one of the gated calls.
+  func gate(forCall call: Int) -> Gate {
+    guard let gate = gates[call] else { preconditionFailure("call \(call) is not gated") }
+    return gate
   }
 
   func currentEntitlements() async -> [PurchaseTransaction] {
@@ -132,7 +151,7 @@ final class GatedEntitlementsClient: PurchaseClient {
       return count
     }
     let reply = await mock.currentEntitlements()
-    if call == gatedCall { await gate.wait() }
+    if let gate = gates[call] { await gate.wait() }
     return reply
   }
 
@@ -160,6 +179,8 @@ final class GatedEntitlementsClient: PurchaseClient {
 /// Records what a store's handler is given and how it ran, and can misbehave on request.
 @MainActor
 final class HandlerRecorder {
+  /// What the first invocation does before returning, after any gate, or `nil` to do nothing.
+  var actionForFirstInvocation: (@MainActor () async -> Void)?
   /// How many invocations are running right now.
   private(set) var active = 0
   /// The error every invocation throws, or `nil` to return normally.
@@ -192,6 +213,7 @@ final class HandlerRecorder {
     finishedAtInvocation.append(mock.finishedTransactions)
     startsContinuation.yield(event)
     if isFirst, let gateForFirstInvocation { await gateForFirstInvocation.wait() }
+    if isFirst, let actionForFirstInvocation { await actionForFirstInvocation() }
     if let error { throw error }
   }
 }

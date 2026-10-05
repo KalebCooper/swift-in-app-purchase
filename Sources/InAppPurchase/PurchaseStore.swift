@@ -29,8 +29,9 @@ public final class PurchaseStore {
   /// The products on offer, in the order their identifiers were given.
   public private(set) var products: [PurchaseProduct] = []
   /// The identifiers of the products the customer currently owns: purchases that are not revoked
-  /// or upgraded, and subscriptions that have not expired. Non-renewing subscriptions are left out,
-  /// because only the app knows how long one lasts.
+  /// or upgraded, and subscriptions the store still reports as current, which includes one in a
+  /// billing grace period. Non-renewing subscriptions are left out, because only the app knows how
+  /// long one lasts.
   public private(set) var purchasedProductIDs: Set<String> = []
 
   private typealias Handler = @MainActor (TransactionEvent) async throws -> Void
@@ -45,6 +46,10 @@ public final class PurchaseStore {
       revocationDate = transaction.revocationDate
     }
   }
+
+  /// Whether the current task is inside the handler. A call back into the store from there must not
+  /// wait on the delivery queue, because the handler's own delivery is at its head.
+  @TaskLocal private static var isDelivering = false
 
   @ObservationIgnored private let client: any PurchaseClient
   /// Keys of every transaction finished in this process, so a replay is not delivered twice.
@@ -61,6 +66,8 @@ public final class PurchaseStore {
   @ObservationIgnored private let productIDs: [String]
   /// The last delivery queued. The next one runs after it, so handlers never overlap.
   @ObservationIgnored private var queueTail: Task<Bool, Never>?
+  /// The newest entitlement read. The store owns it, so a cancelled caller cannot cut it short.
+  @ObservationIgnored private var recomputeTask: Task<Void, Never>?
   @ObservationIgnored private let sleep: Sleep
 
   /// Creates a store that sells the products with `productIDs` through the App Store. It does no
@@ -86,6 +93,7 @@ public final class PurchaseStore {
   isolated deinit {
     listenerTask?.cancel()
     expiryTask?.cancel()
+    recomputeTask?.cancel()
   }
 
   // MARK: Reading
@@ -104,9 +112,9 @@ public final class PurchaseStore {
 
   /// Starts the store with no handler. Calling it again is harmless.
   ///
-  /// Starts listening for transaction updates, retries transactions left unfinished, computes
-  /// ``purchasedProductIDs``, loads ``products``, then returns. Entitlements are computed before
-  /// products load, so gating works offline.
+  /// Starts listening for transaction updates, computes ``purchasedProductIDs``, retries
+  /// transactions left unfinished, loads ``products``, then returns. Entitlements are computed
+  /// before anything that can wait on the network, so gating works offline.
   ///
   /// With no handler, a non-consumable or auto-renewable subscription is finished as soon as it
   /// arrives, because owning it is the content. A consumable or non-renewing subscription is left
@@ -125,6 +133,11 @@ public final class PurchaseStore {
   /// never overlap. If `handler` throws, the transaction stays unfinished and is delivered again
   /// on the next ``refresh()`` or launch, so `handler` must be idempotent on the transaction's
   /// `id`. Otherwise the store behaves as ``start()`` describes.
+  ///
+  /// `handler` must not call ``refresh()``, ``start(handling:)``, or ``purchase(_:options:)`` on
+  /// the store: its own delivery is at the head of the queue those wait on. From inside it, a
+  /// refresh or start recomputes entitlements and returns without waiting for deliveries, and a
+  /// purchase logs a fault and throws ``PurchaseError/Code/unsupported``.
   public func start(
     handling handler: @escaping @MainActor (TransactionEvent) async throws -> Void
   ) async {
@@ -147,8 +160,8 @@ public final class PurchaseStore {
         _ = delivery(of: transaction)
       }
     }
-    await drainUnfinished()
     await recomputeEntitlements()
+    await drainUnfinished()
     await loadProducts()
   }
 
@@ -176,6 +189,15 @@ public final class PurchaseStore {
     options: Set<Product.PurchaseOption>,
     purchaser: Purchaser?
   ) async throws(PurchaseError) -> PurchaseOutcome {
+    guard !Self.isDelivering else {
+      logger.fault(
+        """
+        A purchase was started from inside the transaction handler. The handler's own delivery is \
+        at the head of the queue a purchase waits on, so the purchase is refused.
+        """
+      )
+      throw PurchaseError(.unsupported)
+    }
     let outcome = try await client.purchase(product, options: options, purchaser: purchaser)
     guard case .success(let transaction) = outcome else { return outcome }
     guard let delivery = delivery(of: transaction) else { return outcome }
@@ -188,8 +210,8 @@ public final class PurchaseStore {
   /// Retries transactions left unfinished, recomputes ``purchasedProductIDs``, and reloads
   /// ``products`` if the last load failed. Call it when the app returns to the foreground.
   public func refresh() async {
-    await drainUnfinished()
     await recomputeEntitlements()
+    await drainUnfinished()
     if loadError != nil { await loadProducts() }
   }
 
@@ -245,12 +267,12 @@ public final class PurchaseStore {
       let event: TransactionEvent =
         transaction.revocationDate == nil ? .purchased(transaction) : .revoked(transaction)
       do {
-        try await handler(event)
+        try await Self.$isDelivering.withValue(true) { try await handler(event) }
       } catch {
         logger.error(
           """
           The handler threw for transaction \(transaction.id, privacy: .public) of \
-          \(transaction.productID, privacy: .public): \(String(describing: error), privacy: .public). \
+          \(transaction.productID, privacy: .public): \(String(describing: error), privacy: .private). \
           It is left unfinished and will be delivered again.
           """
         )
@@ -272,10 +294,13 @@ public final class PurchaseStore {
     return true
   }
 
+  /// Queues every transaction left unfinished and waits for the deliveries, except from inside the
+  /// handler, whose own delivery is among them: there it only queues them.
   private func drainUnfinished() async {
     let unfinished = await client.unfinished()
-    let deliveries = unfinished.compactMap { delivery(of: $0) }
-    for delivery in deliveries { _ = await delivery.value }
+    let pending = unfinished.compactMap { delivery(of: $0) }
+    guard !Self.isDelivering else { return }
+    for delivery in pending { _ = await delivery.value }
   }
 
   /// Whether owning a product of `type` is its whole content, so the store can finish it with no
@@ -286,27 +311,45 @@ public final class PurchaseStore {
 
   // MARK: Entitlements
 
+  /// Reads the current entitlements and publishes them. The read runs in a task the store owns, so
+  /// a caller cancelled midway cannot publish a partial set, and this returns only once the newest
+  /// read in flight has been applied, so every caller returns with the latest result.
   private func recomputeEntitlements() async {
     entitlementGeneration += 1
     let generation = entitlementGeneration
-    let transactions = await client.currentEntitlements()
-    guard generation == entitlementGeneration else { return }
-    let now = Date()
-    let current = transactions.filter { Self.isCurrent($0, at: now) }
+    let client = client
+    let task = Task { @MainActor [weak self] in
+      let transactions = await client.currentEntitlements()
+      guard let self, generation == entitlementGeneration else { return }
+      apply(entitlements: transactions)
+    }
+    recomputeTask = task
+    var awaited = task
+    await awaited.value
+    while let latest = recomputeTask, latest != awaited {
+      awaited = latest
+      await awaited.value
+    }
+  }
+
+  private func apply(entitlements transactions: [PurchaseTransaction]) {
+    let current = transactions.filter { Self.isCurrent($0) }
     let ids = Set(current.map(\.productID))
     if ids != purchasedProductIDs { purchasedProductIDs = ids }
-    scheduleExpiry(at: current.compactMap(\.expirationDate).min())
+    let now = Date()
+    scheduleExpiry(at: current.compactMap(\.expirationDate).filter { $0 > now }.min())
   }
 
-  private static func isCurrent(_ transaction: PurchaseTransaction, at now: Date) -> Bool {
-    guard transaction.revocationDate == nil, !transaction.isUpgraded,
-      transaction.productType != .nonRenewable
-    else { return false }
-    if let expiration = transaction.expirationDate { return expiration > now }
-    return true
+  /// Whether `transaction` counts as owned. A past `expirationDate` does not rule a subscription
+  /// out: the store reports one only while it is current, and keeps reporting it through a billing
+  /// grace period, when the paid period has ended but no renewal has been recorded yet.
+  private static func isCurrent(_ transaction: PurchaseTransaction) -> Bool {
+    transaction.revocationDate == nil && !transaction.isUpgraded
+      && transaction.productType != .nonRenewable
   }
 
-  /// Expiry emits nothing on the updates stream, so the store wakes itself at the earliest one.
+  /// Expiry emits nothing on the updates stream, so the store wakes itself at the earliest one
+  /// still ahead. A subscription past its date is left to the store's own listing.
   private func scheduleExpiry(at date: Date?) {
     expiryTask?.cancel()
     expiryTask = nil
