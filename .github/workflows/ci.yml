@@ -1,0 +1,48 @@
+name: CI
+
+# Two lanes. Every module imports StoreKit, which exists only on Apple platforms, so there is no
+# Linux, Windows, Android, or WebAssembly lane to prove portability: the macOS lane is the only one
+# that compiles the package, and it costs money. Batch commits and push once. The lint lane needs
+# no compiler and runs on Linux.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  apple:
+    name: Build (iOS) & Test (macOS)
+    # The OS 27 floor needs the OS 27 SDKs, which GitHub's Xcode 27 image supplies.
+    # https://github.com/actions/runner-images/blob/main/images/macos/xcode-27-arm64-Readme.md
+    runs-on: xcode-27
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Show Xcode version
+        run: xcodebuild -version
+      # Compiles every target, tests included, for the iOS Simulator SDK against a generic
+      # destination, so the iOS build is proven without booting a simulator.
+      - name: Build for iOS
+        run: |
+          set -o pipefail
+          xcodebuild build-for-testing \
+            -scheme swift-in-app-purchase-Package \
+            -destination 'generic/platform=iOS Simulator' \
+            | xcbeautify --renderer github-actions
+      - name: Test on macOS
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -scheme swift-in-app-purchase-Package \
+            -destination 'platform=macOS' \
+            | xcbeautify --renderer github-actions
+
+  lint:
+    name: swift-format lint
+    runs-on: ubuntu-latest
+    container: swift:6.3-noble
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Lint
+        run: swift format lint --strict --recursive Package.swift Sources Tests
