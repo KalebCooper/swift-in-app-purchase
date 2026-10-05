@@ -1,73 +1,198 @@
 import InAppPurchase
 import StoreKit
+import Synchronization
 
-// Each witness spells out `@MainActor`: a witness for a nonisolated protocol requirement is
-// otherwise inferred nonisolated and loses access to the class's state.
-
-/// A ``InAppPurchase/PurchaseClient`` that answers every call from values a test sets.
+/// A purchase client that answers every call from values a test sets.
 ///
-/// The mock's state is main-actor isolated, so a test reads and sets it directly.
-@MainActor
-public final class MockPurchaseClient: PurchaseClient {
-  /// The transactions returned by ``currentEntitlements()``.
-  public var entitlements: [PurchaseTransaction]
-  /// The error thrown by every throwing call, or `nil` to succeed.
-  public var failure: PurchaseError?
-  /// The transactions passed to ``finish(_:)``, in call order.
-  public private(set) var finished: [PurchaseTransaction] = []
-  /// The outcome returned by ``purchase(_:options:)``.
-  public var outcome: PurchaseOutcome
-  /// The products returned by ``products(for:)``.
-  public var products: [PurchaseProduct]
+/// Pass the mock to `PurchaseStore(client:productIDs:)` to run a store without the App Store.
+/// Set what the store should see, push transactions into it with ``send(_:)``, and read what it
+/// finished from ``finishedTransactions`` or await the next finish with
+/// ``nextFinishedTransaction()``.
+///
+/// The mock is `Sendable` and its state sits behind a lock, so a test sets and reads it from any
+/// task without hopping actors.
+public final class MockPurchaseClient: PurchaseClient, Sendable {
+  private typealias FinishWaiter = CheckedContinuation<
+    Result<PurchaseTransaction, CancellationError>, Never
+  >
 
-  /// Creates a mock that owns `entitlements`, sells `products`, and returns `outcome` from a
-  /// purchase, or throws `failure` from every throwing call.
-  public init(
-    entitlements: [PurchaseTransaction] = [],
-    failure: PurchaseError? = nil,
-    outcome: PurchaseOutcome = .userCancelled,
-    products: [PurchaseProduct] = []
-  ) {
-    self.entitlements = entitlements
-    self.failure = failure
-    self.outcome = outcome
-    self.products = products
+  private struct State {
+    var entitlements: [PurchaseTransaction] = []
+    var finishWaiters: [Int: FinishWaiter] = [:]
+    var finishedTransactions: [PurchaseTransaction] = []
+    var nextToken = 0
+    var products: [PurchaseProduct] = []
+    var productsError: PurchaseError?
+    var purchaseResult: Result<PurchaseOutcome, PurchaseError> = .success(.userCancelled)
+    var syncResult: Result<Void, PurchaseError> = .success(())
+    var unfinishedTransactions: [PurchaseTransaction] = []
+    var unreturnedFinishes: [PurchaseTransaction] = []
+    var updateContinuations: [Int: AsyncStream<PurchaseTransaction>.Continuation] = [:]
+
+    mutating func makeToken() -> Int {
+      defer { nextToken += 1 }
+      return nextToken
+    }
   }
 
-  /// Returns ``entitlements``.
-  @MainActor public func currentEntitlements() async -> [PurchaseTransaction] {
+  private let state = Mutex(State())
+
+  /// Creates a mock that owns nothing, sells nothing, and reports every purchase as cancelled.
+  public init() {}
+
+  // MARK: Values a test sets
+
+  /// The transactions the customer is entitled to. Empty by default.
+  public var entitlements: [PurchaseTransaction] {
+    get { state.withLock { $0.entitlements } }
+    set { state.withLock { $0.entitlements = newValue } }
+  }
+
+  /// The products the store sells. A request returns the ones whose identifiers it asked for, in
+  /// the order set here rather than the order requested, as StoreKit does. Empty by default.
+  public var products: [PurchaseProduct] {
+    get { state.withLock { $0.products } }
+    set { state.withLock { $0.products = newValue } }
+  }
+
+  /// The error a product request throws, or `nil` to return ``products``. `nil` by default.
+  public var productsError: PurchaseError? {
+    get { state.withLock { $0.productsError } }
+    set { state.withLock { $0.productsError = newValue } }
+  }
+
+  /// How every purchase ends: an outcome to return or an error to throw. Returns
+  /// ``InAppPurchase/PurchaseOutcome/userCancelled`` by default.
+  public var purchaseResult: Result<PurchaseOutcome, PurchaseError> {
+    get { state.withLock { $0.purchaseResult } }
+    set { state.withLock { $0.purchaseResult = newValue } }
+  }
+
+  /// How every sync with the store ends. Succeeds by default.
+  public var syncResult: Result<Void, PurchaseError> {
+    get { state.withLock { $0.syncResult } }
+    set { state.withLock { $0.syncResult = newValue } }
+  }
+
+  /// The transactions the app has not finished, such as purchases waiting at launch. Finishing a
+  /// transaction removes it. Empty by default.
+  public var unfinishedTransactions: [PurchaseTransaction] {
+    get { state.withLock { $0.unfinishedTransactions } }
+    set { state.withLock { $0.unfinishedTransactions = newValue } }
+  }
+
+  // MARK: What the store did
+
+  /// Every transaction finished so far, in the order it was finished.
+  public var finishedTransactions: [PurchaseTransaction] {
+    state.withLock { $0.finishedTransactions }
+  }
+
+  /// The number of transaction-update streams still open.
+  package var activeUpdateSubscriptions: Int {
+    state.withLock { $0.updateContinuations.count }
+  }
+
+  /// Returns the next finished transaction, waiting for it if it has not happened yet.
+  ///
+  /// Each call returns a different finish, in the order they happened, so a finish that lands
+  /// before the call is not missed and none is returned twice.
+  ///
+  /// - Throws: `CancellationError` if the calling task is cancelled while it waits.
+  public func nextFinishedTransaction() async throws(CancellationError) -> PurchaseTransaction {
+    let token = state.withLock { $0.makeToken() }
+    let result = await withTaskCancellationHandler {
+      await withCheckedContinuation { continuation in
+        // Registration and the cancellation check share the lock, so a cancellation either sees
+        // the waiter and resumes it, or happened first and is caught here.
+        let immediate: Result<PurchaseTransaction, CancellationError>? = state.withLock { state in
+          if !state.unreturnedFinishes.isEmpty {
+            return .success(state.unreturnedFinishes.removeFirst())
+          }
+          if Task.isCancelled { return .failure(CancellationError()) }
+          state.finishWaiters[token] = continuation
+          return nil
+        }
+        if let immediate { continuation.resume(returning: immediate) }
+      }
+    } onCancel: {
+      state.withLock { $0.finishWaiters.removeValue(forKey: token) }?
+        .resume(returning: .failure(CancellationError()))
+    }
+    return try result.get()
+  }
+
+  // MARK: Driving the store
+
+  /// Delivers `transaction` to every open transaction-update stream, as StoreKit does for a
+  /// renewal, a refund, or an approved Ask to Buy request.
+  ///
+  /// A transaction sent while no stream is open is dropped. To model one waiting at launch, add it
+  /// to ``unfinishedTransactions`` instead.
+  public func send(_ transaction: PurchaseTransaction) {
+    let continuations = state.withLock { Array($0.updateContinuations.values) }
+    for continuation in continuations {
+      continuation.yield(transaction)
+    }
+  }
+
+  // MARK: PurchaseClient
+
+  package func currentEntitlements() async -> [PurchaseTransaction] {
     entitlements
   }
 
-  /// Records `transaction` in ``finished``.
-  @MainActor public func finish(_ transaction: PurchaseTransaction) async {
-    finished.append(transaction)
+  package func finish(_ transaction: PurchaseTransaction) async {
+    let waiter: FinishWaiter? = state.withLock { state in
+      state.finishedTransactions.append(transaction)
+      state.unfinishedTransactions.removeAll { $0.id == transaction.id }
+      guard let token = state.finishWaiters.keys.min() else {
+        state.unreturnedFinishes.append(transaction)
+        return nil
+      }
+      return state.finishWaiters.removeValue(forKey: token)
+    }
+    waiter?.resume(returning: .success(transaction))
   }
 
-  /// Throws ``failure`` if set, and otherwise returns ``products``.
-  @MainActor public func products(for identifiers: Set<String>) async throws(PurchaseError)
-    -> [PurchaseProduct]
-  {
-    if let failure { throw failure }
-    return products
+  package func products(for ids: [String]) async throws(PurchaseError) -> [PurchaseProduct] {
+    let (products, error) = state.withLock { ($0.products, $0.productsError) }
+    if let error { throw error }
+    let requested = Set(ids)
+    return products.filter { requested.contains($0.id) }
   }
 
-  /// Throws ``failure`` if set, and otherwise returns ``outcome``.
-  @MainActor public func purchase(
+  package func purchase(
     _ product: PurchaseProduct,
-    options: Set<Product.PurchaseOption>
+    options: Set<Product.PurchaseOption>,
+    purchaser: Purchaser?
   ) async throws(PurchaseError) -> PurchaseOutcome {
-    if let failure { throw failure }
-    return outcome
+    try purchaseResult.get()
   }
 
-  /// Throws ``failure`` if set.
-  @MainActor public func restore() async throws(PurchaseError) {
-    if let failure { throw failure }
+  package func sync() async throws(PurchaseError) {
+    try syncResult.get()
   }
 
-  /// Returns a stream that finishes without emitting.
-  nonisolated public func transactionUpdates() -> AsyncStream<PurchaseTransaction> {
-    AsyncStream { $0.finish() }
+  package func unfinished() async -> [PurchaseTransaction] {
+    unfinishedTransactions
+  }
+
+  package func updates() -> AsyncStream<PurchaseTransaction> {
+    let (stream, continuation) = AsyncStream.makeStream(of: PurchaseTransaction.self)
+    let token = state.withLock { $0.makeToken() }
+    continuation.onTermination = { [weak self] _ in
+      self?.state.withLock { _ = $0.updateContinuations.removeValue(forKey: token) }
+    }
+    state.withLock { $0.updateContinuations[token] = continuation }
+    return stream
+  }
+}
+
+extension PurchaseStore {
+  /// Creates a store that sells the products with `productIDs` through `client`, for a test or a
+  /// preview.
+  public convenience init(client: MockPurchaseClient, productIDs: [String]) {
+    self.init(client: client as any PurchaseClient, productIDs: productIDs)
   }
 }

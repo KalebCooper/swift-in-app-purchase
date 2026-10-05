@@ -3,9 +3,8 @@ import StoreKit
 
 /// The observable purchase state a view renders: the products on offer and what the customer owns.
 ///
-/// The store owns no StoreKit objects. It drives a ``PurchaseClient`` and publishes what the client
-/// reports, so the same store runs against ``StoreKitPurchaseClient`` in an app and against a mock
-/// in a test or preview.
+/// The store owns no StoreKit objects. It publishes what its client reports, so the same store
+/// runs against the App Store in an app and against `MockPurchaseClient` in a test or preview.
 @MainActor
 @Observable
 public final class PurchaseStore {
@@ -16,10 +15,17 @@ public final class PurchaseStore {
   public private(set) var products: [String: PurchaseProduct] = [:]
 
   @ObservationIgnored private let client: any PurchaseClient
+  @ObservationIgnored private let productIDs: [String]
 
-  /// Creates a store that reads and purchases through `client`.
-  public init(client: any PurchaseClient) {
+  /// Creates a store that sells the products with `productIDs` through the App Store.
+  public convenience init(productIDs: [String]) {
+    self.init(client: StoreKitPurchaseClient(), productIDs: productIDs)
+  }
+
+  /// Creates a store that sells the products with `productIDs` through `client`.
+  package init(client: any PurchaseClient, productIDs: [String]) {
     self.client = client
+    self.productIDs = productIDs
   }
 
   /// Finishes `transaction` once its content is delivered, and refreshes ``entitlements``.
@@ -27,7 +33,7 @@ public final class PurchaseStore {
     fatalError("PurchaseStore.finish(_:) is not implemented.")
   }
 
-  /// Hands each transaction from ``PurchaseClient/transactionUpdates()`` to `deliver` and refreshes
+  /// Hands each transaction that arrives outside a purchase call to `deliver` and refreshes
   /// ``entitlements``, until the calling task is cancelled. `deliver` grants the transaction's
   /// content and calls ``finish(_:)``. Call this from a long-lived task, such as the app scene's
   /// `.task`.
