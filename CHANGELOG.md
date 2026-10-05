@@ -6,6 +6,7 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+- Restructured the README for skimming: features, a quick start, common tasks with code taken from the example app, the delivery rules as a table, how to run the example app, and links to the documentation articles. The long-form rules and recipes now live in the articles.
 - Added documentation articles: Getting Started, Delivering Transactions, Gating Features, and Handling Errors in `InAppPurchase`, Building a Paywall in `InAppPurchaseUI`, and Testing Purchases in `InAppPurchaseTesting`. `PurchaseStore`, `PurchaseStore.start(handling:)`, and `Entitlement` gain code examples, and every parameter of `PurchaseTransaction.init` is documented.
 - Added an example app, `Examples/PurchaseExample`. It sells tips, Pro as a one-time purchase or a subscription, and consumable coins through one `PurchaseStore` and one transaction handler, runs in the simulator against a bundled StoreKit configuration with no signing, and tests its coin delivery with `MockPurchaseClient`.
 - Documented purchase integration: the README now covers starting the store, the delivery rules, a tip jar, subscription gating, consumable coins, testing with `MockPurchaseClient`, and previews with `PurchaseStore.preview`, and each module's documentation catalog lists its public types.

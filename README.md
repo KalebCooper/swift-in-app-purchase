@@ -3,211 +3,115 @@
 [![CI](https://github.com/KalebCooper/swift-in-app-purchase/actions/workflows/ci.yml/badge.svg)](https://github.com/KalebCooper/swift-in-app-purchase/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-In-app purchases for Swift apps, built on StoreKit 2.
-
-`PurchaseStore` is the observable state a view renders: the products on offer and what the customer
-owns. It listens for transaction updates, retries transactions left unfinished, keeps entitlements
-current as subscriptions renew, expire, and are refunded, and finishes a transaction only after your
-code has delivered it. It reads from the App Store in an app and from `MockPurchaseClient` in a test
-or preview.
+In-app purchases for Swift apps, built on StoreKit 2: one observable store that delivers every
+transaction and keeps entitlements current.
 
 > **Status:** pre-release. The store, the App Store client, the SwiftUI bridge, and the mock client
 > are implemented and the store is tested against the mock client. No version has been tagged.
 
-## Installation
+## Features
 
-| Product | Add it to |
-|---|---|
-| `InAppPurchase` | Any target that loads products, purchases, or reads entitlements. No UI framework behind it. |
-| `InAppPurchaseUI` | A SwiftUI target that purchases through `@Environment(\.purchase)` or refreshes on foreground. Depends on `InAppPurchase`. |
-| `InAppPurchaseTesting` | A test or preview target. Depends on `InAppPurchase`. |
+- **Strict verification.** A transaction that fails StoreKit's verification is never delivered,
+  counted, or finished.
+- **Deliver, then finish.** Every transaction reaches one handler, at least once and one at a time,
+  and the store finishes it only after the handler returns, so a consumable is never lost.
+- **Entitlements that stay current.** `isEntitled(to:)` follows renewals, expiry, and refunds on its
+  own, and a subscriber in a billing grace period stays entitled.
+- **SwiftUI bridge.** Purchase through the view's `@Environment(\.purchase)`, the only programmatic
+  purchase path on visionOS, and refresh the store whenever the app returns to the foreground.
+- **Mock client and previews.** `MockPurchaseClient` drives the store in tests without the App
+  Store, and `PurchaseStore.preview` renders locked and unlocked states in a SwiftUI preview.
+
+## Quick start
+
+Add the package. No version is tagged yet, so depend on the `main` branch; once the first release is
+tagged, switch to `from:` that version.
+
+```swift
+dependencies: [
+  .package(url: "https://github.com/KalebCooper/swift-in-app-purchase.git", branch: "main")
+]
+```
 
 Versions follow semantic versioning, and every change is recorded in [CHANGELOG.md](CHANGELOG.md).
 
-## Requirements
-
-- Swift 6.4 tools, Swift 6 language mode
-- iOS 27 / macOS 27 / tvOS 27 / visionOS 27 / watchOS 27
-- No dependencies
-
-## How it works
-
-Create one store with the identifiers of the products you sell, start it once at launch, and put it
-in the environment.
+Create one store with the identifier of every product you sell:
 
 ```swift
-import InAppPurchase
-import SwiftUI
+@State private var store = PurchaseStore(productIDs: [
+  "coins.100", "coins.500", "pro.lifetime", "pro.monthly", "pro.yearly", "tip.large",
+  "tip.medium", "tip.small",
+])
+```
+Source: [Examples/PurchaseExample/PurchaseExample/PurchaseExampleApp.swift](Examples/PurchaseExample/PurchaseExample/PurchaseExampleApp.swift)
 
-@main
-struct ExampleApp: App {
-  @State private var store = PurchaseStore(productIDs: ["tip.small", "tip.large"])
+Put it in the environment and start it once, from the app's root, with a handler that delivers what
+the customer paid for:
 
-  var body: some Scene {
-    WindowGroup {
-      ContentView()
-        .environment(store)
-        .task {
-          await store.start { event in
-            // Deliver what the customer paid for. See the recipes below.
-          }
-        }
+```swift
+ContentView(thankedTransactionIDs: thankedTransactionIDs)
+  .environment(store)
+  .refreshingPurchases(store)
+  .task {
+    // One handler delivers every product, one transaction at a time. The store finishes
+    // each transaction only after the handler returns.
+    await store.start { event in
+      switch event {
+      case .purchased(let transaction) where transaction.productID.hasPrefix("tip."):
+        // A transaction can arrive more than once, so key the thank-you on its id.
+        thankedTransactionIDs.insert(transaction.id)
+      case .purchased(let transaction) where transaction.productID.hasPrefix("coins."),
+        .revoked(let transaction) where transaction.productID.hasPrefix("coins."):
+        try CoinDelivery.deliver(event, in: container.mainContext)
+      default:
+        // Owning Pro is the content, so there is nothing to deliver.
+        break
+      }
     }
   }
-}
 ```
+Source: [Examples/PurchaseExample/PurchaseExample/PurchaseExampleApp.swift](Examples/PurchaseExample/PurchaseExample/PurchaseExampleApp.swift)
 
-`start(handling:)` starts the transaction listener, computes `purchasedProductIDs`, retries
-transactions left unfinished by an earlier launch, and loads `products`, in that order, so gating
-works before the network answers.
+Starting computes what the customer owns before it loads products, so a gated view is right even
+offline. `refreshingPurchases(_:)` refreshes the store each time the app returns to the foreground.
 
-### The rules
-
-- **Start once, at launch.** Call `start` or `start(handling:)` from your app's root. Calling it again
-  refreshes the store and, if you pass a handler, replaces the handler.
-- **One store per process.** A second store listening for transaction updates in the same process
-  logs a fault.
-- **Delivery is at least once, one at a time.** Every transaction, whether it came from a purchase,
-  a transaction update such as an Ask to Buy approval, or an earlier launch, reaches your handler as
-  `TransactionEvent.purchased` or `TransactionEvent.revoked`. Invocations never overlap, and the store
-  finishes a transaction only after the handler returns. If the handler throws, or the app is killed
-  before the transaction is finished, the transaction is delivered again on the next `refresh()` or
-  launch. Make the handler idempotent on `transaction.id`.
-- **The handler must not call `refresh()`, `start`, or `purchase` on the store.** Its own delivery is
-  at the head of the queue those calls wait on. From inside the handler a refresh returns without
-  waiting for deliveries, and a purchase throws `PurchaseError.Code.unsupported`.
-- **Restore only from a button.** `restore()` can ask the customer to sign in. Never call it from
-  `start`, a `.task`, or a foreground hook.
-- **Do not attach `.onInAppPurchaseCompletion`.** Without it, purchases made through `StoreView`,
-  `ProductView`, and `SubscriptionStoreView` arrive as transaction updates, which the store already
-  delivers. To close a paywall after a purchase, dismiss it when `isEntitled(to:)` changes.
-- **Verification is strict.** A transaction that fails StoreKit's verification is never delivered,
-  counted, or finished, and a purchase that fails it throws `PurchaseError.Code.unverified`.
-- **A subscription in a billing grace period counts as entitled.** `purchasedProductIDs` holds a
-  subscription for as long as the App Store reports it current.
-- **Non-renewing subscriptions are never in `purchasedProductIDs`**, because only the app knows how
-  long one lasts. They reach the handler like a consumable.
-- **With no handler, consumables and non-renewing subscriptions stay unfinished.** `start()` finishes
-  a non-consumable or auto-renewable as soon as it arrives, since owning it is the content. It leaves
-  a consumable or non-renewing subscription unfinished and logs a fault, and `purchase` of one throws
-  `PurchaseError.Code.deliveryFailed`. Pass a handler to `start(handling:)` to deliver them.
-- **Subscription bundles.** Buying a bundle creates one transaction per bundled subscription, so a
-  bundle's own product ID never appears in `purchasedProductIDs`. Gate on the bundled subscriptions'
-  product IDs.
-- **visionOS.** `PurchaseStore.purchase(_:options:)` is unavailable there. Purchase through
-  `purchase(_:using:options:)` from `InAppPurchaseUI`, which takes the scene's `PurchaseAction`.
-  Purchases made through StoreKit's own views need nothing.
-
-## Recipes
-
-### A tip jar
-
-StoreKit's `StoreView` is the storefront. The store delivers each tip. A tip has nothing to grant, so
-the handler thanks the customer once per transaction.
+Declare what each feature needs, then gate on it with `store.isEntitled(to: .pro)`:
 
 ```swift
-import InAppPurchase
-import StoreKit
-import SwiftUI
-
-@main
-struct TipApp: App {
-  @State private var store = PurchaseStore(productIDs: ["tip.small", "tip.medium", "tip.large"])
-  @State private var thanked: Set<UInt64> = []
-
-  var body: some Scene {
-    WindowGroup {
-      TipJarScreen()
-        .environment(store)
-        .task {
-          await store.start { event in
-            guard case .purchased(let transaction) = event else { return }
-            // The same transaction can arrive more than once, so key on its id.
-            guard thanked.insert(transaction.id).inserted else { return }
-            // Show a thank-you, or record the tip.
-          }
-        }
-    }
-  }
-}
-
-struct TipJarScreen: View {
-  var body: some View {
-    StoreView(ids: ["tip.small", "tip.medium", "tip.large"])
-  }
-}
-```
-
-A tip is a consumable, so the store leaves it unfinished until the handler returns. If you do not
-need to react to tips, a handler that returns immediately is enough to have them finished.
-
-### Gating a feature behind a subscription
-
-Declare the entitlement once. It is the set of products that each unlock the feature.
-
-```swift
-import InAppPurchase
-import InAppPurchaseUI
-import StoreKit
-import SwiftUI
-
 extension Entitlement {
-  static let pro = Entitlement(["pro.monthly", "pro.yearly", "pro.lifetime"])
-}
-
-struct ProGate: View {
-  @Environment(PurchaseStore.self) private var store
-  @State private var isShowingPaywall = false
-
-  var body: some View {
-    Group {
-      if store.isEntitled(to: .pro) {
-        ProContent()
-      } else {
-        Button("Unlock Pro") { isShowingPaywall = true }
-      }
-    }
-    .refreshingPurchases(store)
-    .sheet(isPresented: $isShowingPaywall) {
-      SubscriptionStoreView(productIDs: ["pro.monthly", "pro.yearly"])
-        .storeButton(.visible, for: .restorePurchases)
-        // Dismiss when the entitlement changes, not through .onInAppPurchaseCompletion.
-        .onChange(of: store.isEntitled(to: .pro)) { _, isEntitled in
-          if isEntitled { isShowingPaywall = false }
-        }
-    }
-  }
+  /// Pro is unlocked by the one-time purchase or by either subscription.
+  static let pro = Entitlement(["pro.lifetime", "pro.monthly", "pro.yearly"])
 }
 ```
+Source: [Examples/PurchaseExample/PurchaseExample/Pro/Entitlement+Pro.swift](Examples/PurchaseExample/PurchaseExample/Pro/Entitlement+Pro.swift)
 
-`refreshingPurchases(_:)` calls `refresh()` each time the scene becomes active. Subscription renewals,
-expiry, and refunds update `isEntitled(to:)` without any further code. A subscriber in a billing grace
-period stays entitled.
+## Common tasks
 
-To build your own paywall rather than use `SubscriptionStoreView`, read `store.products` and purchase
-through the view's `PurchaseAction`:
+### Gate a feature
+
+Ask the store whether the customer owns any product in the entitlement. The store is observable, so
+the view updates when a purchase, renewal, expiry, or refund changes the answer.
 
 ```swift
-struct PaywallButton: View {
-  @Environment(PurchaseStore.self) private var store
-  @Environment(\.purchase) private var purchase
-  let product: PurchaseProduct
-
-  var body: some View {
-    Button("\(product.displayName) \(product.displayPrice)") {
-      Task {
-        switch try? await store.purchase(product, using: purchase) {
-        case .success: break  // The entitlement is already updated.
-        case .pending: break  // Approval later arrives as an update.
-        case .userCancelled, nil: break
-        }
-      }
+if store.isEntitled(to: .pro) {
+  Section {
+    Label("Pro is unlocked", systemImage: "checkmark.seal.fill")
+  } footer: {
+    Text("A subscriber in a billing grace period stays unlocked.")
+  }
+} else {
+  Section("Unlock Pro") {
+    Button("See Subscriptions") { isShowingSubscriptions = true }
+    if let lifetime = store.product(id: "pro.lifetime") {
+      PaywallButton(product: lifetime)
     }
   }
 }
 ```
+Source: [Examples/PurchaseExample/PurchaseExample/Pro/ProGate.swift](Examples/PurchaseExample/PurchaseExample/Pro/ProGate.swift)
 
-Gate a subscription bundle on the bundled subscriptions, not on the bundle:
+A subscription bundle's own identifier never appears in `purchasedProductIDs`, so gate on the
+bundled subscriptions:
 
 ```swift
 extension Entitlement {
@@ -216,95 +120,150 @@ extension Entitlement {
 }
 ```
 
-### Consumable coins
+### Sell with StoreKit views
 
-Coins are a consumable, so the handler grants them and the store finishes the transaction afterward.
-Key the grant on `transaction.id` so a redelivery changes nothing, and handle `.revoked` so a refund
-takes the coins back.
+`StoreView`, `ProductView`, and `SubscriptionStoreView` need no extra code. Their purchases arrive as
+transaction updates, which the store delivers to your handler. To close a paywall sheet after a
+purchase, dismiss it when `isEntitled(to:)` changes.
 
 ```swift
-import InAppPurchase
-import SwiftData
+// A purchase made in StoreView arrives as a transaction update, which the store delivers to
+// the app's handler. Attaching .onInAppPurchaseCompletion would take it off that path.
+StoreView(ids: ["tip.small", "tip.medium", "tip.large"])
+```
+Source: [Examples/PurchaseExample/PurchaseExample/Tips/TipJarScreen.swift](Examples/PurchaseExample/PurchaseExample/Tips/TipJarScreen.swift)
 
-@Model
-final class CoinGrant {
-  @Attribute(.unique) var transactionID: UInt64
-  var coins: Int
+### Build a custom purchase button
 
-  init(transactionID: UInt64, coins: Int) {
-    self.transactionID = transactionID
-    self.coins = coins
+Purchase a product from `store.products` through the view's `@Environment(\.purchase)`. The call
+returns `.success` only after your handler has delivered the transaction and the store has finished
+it, so the entitlement is already current.
+
+```swift
+private func buy() async {
+  isPurchasing = true
+  defer { isPurchasing = false }
+  do {
+    // The view's purchase action shows the confirmation sheet in this scene.
+    switch try await store.purchase(product, using: purchase) {
+    case .success:
+      // The handler has delivered the content and the store has finished the transaction.
+      status = nil
+    case .pending:
+      status = "Waiting for approval. The purchase arrives when it is approved."
+    case .userCancelled:
+      status = nil
+    }
+  } catch {
+    status =
+      switch error.code {
+      case .deliveryFailed:
+        "Paid, but delivery failed. It is retried the next time the app opens."
+      case .userCancelled:
+        nil
+      default:
+        "Purchase failed: \(error.code.rawValue)"
+      }
   }
 }
+```
+Source: [Examples/PurchaseExample/PurchaseExample/Pro/PaywallButton.swift](Examples/PurchaseExample/PurchaseExample/Pro/PaywallButton.swift)
 
-let coinsPerPack = ["coins.100": 100, "coins.500": 500]
+Cancelling the sheet returns `.userCancelled` rather than throwing; the error arm is a safeguard.
 
-@MainActor
-func deliver(_ event: TransactionEvent, in context: ModelContext) throws {
+### Deliver consumables
+
+Grant the content in the handler, keyed on `transaction.id` so a redelivery changes nothing, and save
+before returning.
+
+```swift
+/// Records the coins `event` grants, or removes them when it is a revocation. Saves before
+/// returning, because the store finishes the transaction as soon as the handler returns.
+static func deliver(_ event: TransactionEvent, in context: ModelContext) throws {
   switch event {
   case .purchased(let transaction):
-    let id = transaction.id
-    let existing = try context.fetch(
-      FetchDescriptor<CoinGrant>(predicate: #Predicate { $0.transactionID == id })
-    )
-    guard existing.isEmpty else { return }  // Already delivered. Finishing was interrupted.
+    // A transaction can arrive more than once, so grant its coins only the first time.
+    guard try grants(for: transaction, in: context).isEmpty else { return }
     let coins = coinsPerPack[transaction.productID, default: 0] * transaction.quantity
-    context.insert(CoinGrant(transactionID: id, coins: coins))
-    try context.save()
-
+    context.insert(CoinGrant(coins: coins, transactionID: transaction.id))
   case .revoked(let transaction):
-    // A revocation carries the purchase's id.
-    let id = transaction.id
-    for grant in try context.fetch(
-      FetchDescriptor<CoinGrant>(predicate: #Predicate { $0.transactionID == id })
-    ) {
+    // A revocation carries the id of the purchase it revokes.
+    for grant in try grants(for: transaction, in: context) {
       context.delete(grant)
     }
-    try context.save()
+  }
+  try context.save()
+}
+```
+Source: [Examples/PurchaseExample/PurchaseExample/Coins/CoinDelivery.swift](Examples/PurchaseExample/PurchaseExample/Coins/CoinDelivery.swift)
+
+If the handler throws, the store leaves the transaction unfinished and delivers it again on the next
+`refresh()` or launch, and `purchase` throws `deliveryFailed`. Log the handler's error yourself; the
+`PurchaseError` does not carry it.
+
+### Handle refunds
+
+A refund arrives as `.revoked`, with the same `id` as the purchase it takes back. Remove what that
+purchase granted.
+
+```swift
+case .revoked(let transaction):
+  // A revocation carries the id of the purchase it revokes.
+  for grant in try grants(for: transaction, in: context) {
+    context.delete(grant)
+  }
+```
+Source: [Examples/PurchaseExample/PurchaseExample/Coins/CoinDelivery.swift](Examples/PurchaseExample/PurchaseExample/Coins/CoinDelivery.swift)
+
+A refunded non-consumable or subscription simply leaves `purchasedProductIDs`; there is nothing to
+undo.
+
+### Restore purchases
+
+Entitlements stay in sync on their own, so restoring is rarely needed. `restore()` can ask the
+customer to sign in, so call it only from a button.
+
+```swift
+private func restore() async {
+  isRestoring = true
+  defer { isRestoring = false }
+  do {
+    // Restoring can ask the customer to sign in, so it runs only from this button.
+    try await store.restore()
+    restoreError = nil
+  } catch {
+    restoreError = error
   }
 }
 ```
+Source: [Examples/PurchaseExample/PurchaseExample/Pro/ProGate.swift](Examples/PurchaseExample/PurchaseExample/Pro/ProGate.swift)
 
-Pass it to the store from the app's root:
+### Test with the mock
 
-```swift
-await store.start { event in
-  try deliver(event, in: container.mainContext)
-}
-```
-
-The balance is the sum of the grants, so a redelivered purchase and a refund both leave it correct.
-If `deliver` throws, the store leaves the transaction unfinished and delivers it again on the next
-`refresh()` or launch. `purchase` then throws `PurchaseError.Code.deliveryFailed`; log the underlying
-error in the handler, because the store does not carry it.
-
-## Testing and previews
-
-`InAppPurchaseTesting` provides `MockPurchaseClient`. Set what the store should see, then drive it
-without the App Store.
+`MockPurchaseClient`, from `InAppPurchaseTesting`, answers the store from values the test sets. This
+test runs the app's own delivery code against an in-memory store.
 
 ```swift
-import InAppPurchase
-import InAppPurchaseTesting
-import Testing
-
-@MainActor
-@Test func grantsCoinsOnce() async {
+@Test func deliversCoinsOnce() async throws {
+  let container = try ModelContainer(
+    for: CoinGrant.self,
+    configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+  )
   let mock = MockPurchaseClient()
   mock.unfinishedTransactions = [
     PurchaseTransaction(id: 1, productID: "coins.100", productType: .consumable)
   ]
   let store = PurchaseStore(client: mock, productIDs: ["coins.100"])
 
-  var delivered: [UInt64] = []
   await store.start { event in
-    if case .purchased(let transaction) = event { delivered.append(transaction.id) }
+    try CoinDelivery.deliver(event, in: container.mainContext)
   }
 
-  #expect(delivered == [1])
+  #expect(try balance(in: container) == 100)
   #expect(mock.finishedTransactions.map(\.id) == [1])
 }
 ```
+Source: [Examples/PurchaseExample/PurchaseExampleTests/CoinDeliveryTests.swift](Examples/PurchaseExample/PurchaseExampleTests/CoinDeliveryTests.swift)
 
 - `entitlements`, `products`, `productsError`, `purchaseResult`, `syncResult`, and
   `unfinishedTransactions` set what the mock answers.
@@ -312,30 +271,91 @@ import Testing
 - `finishedTransactions` lists what the store finished, and `nextFinishedTransaction()` waits for the
   next one, so a test never sleeps.
 
-A SwiftUI preview uses `PurchaseStore.preview(products:purchasedProductIDs:)`, which needs neither
-the mock nor the App Store.
+### Preview
+
+`PurchaseStore.preview(products:purchasedProductIDs:)` needs neither the mock nor the App Store. Pass
+owned identifiers to preview the unlocked state. A preview store completes no purchase.
 
 ```swift
-#Preview {
+#Preview("Locked") {
   ProGate()
     .environment(
-      PurchaseStore.preview(
-        products: [
-          PurchaseProduct(
-            displayName: "Pro Monthly",
-            displayPrice: "$4.99",
-            id: "pro.monthly",
-            type: .autoRenewable
-          )
-        ],
-        purchasedProductIDs: []
-      )
+      PurchaseStore.preview(products: [
+        PurchaseProduct(
+          displayName: "Pro Lifetime",
+          displayPrice: "$29.99",
+          id: "pro.lifetime",
+          type: .nonConsumable
+        )
+      ])
     )
 }
-```
 
-Pass `purchasedProductIDs: ["pro.monthly"]` to preview the unlocked state. A preview store completes no
-purchase.
+#Preview("Unlocked") {
+  ProGate()
+    .environment(PurchaseStore.preview(purchasedProductIDs: ["pro.yearly"]))
+}
+```
+Source: [Examples/PurchaseExample/PurchaseExample/Pro/ProGate.swift](Examples/PurchaseExample/PurchaseExample/Pro/ProGate.swift)
+
+## The rules
+
+The long form, with the reasons, is in the articles listed under [Documentation](#documentation).
+
+| Rule | In short |
+|---|---|
+| Start once, at launch | Call `start(handling:)` from the app's root. Calling it again refreshes the store and replaces the handler. |
+| One store per process | A second store listening for transaction updates in the same process logs a fault. |
+| Delivery is at least once | The store finishes a transaction only after the handler returns. A throw, or a kill before finishing, means it is delivered again on the next `refresh()` or launch. |
+| Delivery is one at a time | Handler calls never overlap. Each runs on the main actor after the previous delivery ends. |
+| Be idempotent on `transaction.id` | Record what was delivered under the transaction's `id`, and save before returning. |
+| Never call back into the store from the handler | From inside the handler, `refresh()` and `start` return without waiting for deliveries, and `purchase` throws `unsupported`. |
+| Restore only from a button | `restore()` can ask the customer to sign in. Never call it from `start`, a `.task`, or a foreground hook. |
+| No `.onInAppPurchaseCompletion` | StoreKit view purchases then arrive as transaction updates. Close a paywall when `isEntitled(to:)` changes. |
+| Verification is strict | An unverified transaction is never delivered, counted, or finished, and a purchase that fails verification throws `unverified`. |
+| Grace period counts as entitled | A subscription stays in `purchasedProductIDs` for as long as the App Store reports it current. |
+| Non-renewing subscriptions are never owned | They reach the handler like a consumable; the app records and gates on the period itself. |
+| Without a handler, consumables wait | `start()` finishes non-consumables and auto-renewables, leaves consumables and non-renewing subscriptions unfinished with a fault, and `purchase` of one throws `deliveryFailed`. |
+| Gate bundles on their subscriptions | A bundle's own identifier never appears in `purchasedProductIDs`. |
+| visionOS purchases need the scene | `purchase(_:options:)` is unavailable there. Use `purchase(_:using:options:)` from `InAppPurchaseUI`. |
+
+## Example app
+
+[Examples/PurchaseExample](Examples/PurchaseExample) sells tips, Pro as a one-time purchase or a
+subscription, and consumable coins through one store and one handler. It shows a `StoreView` tip
+jar, a `SubscriptionStoreView` paywall that closes on the entitlement change, a custom purchase
+button, restore, refund handling, previews of every screen, and tests of its coin delivery with
+`MockPurchaseClient`.
+
+To run it, open `Examples/PurchaseExample/PurchaseExample.xcodeproj` in Xcode and run the
+`PurchaseExample` scheme on an iOS simulator. The scheme loads products from the bundled
+`Products.storekit`, so it needs no App Store Connect setup and no signing. To run on a device, set
+your own development team on the target locally.
+
+## Documentation
+
+| Article | Covers |
+|---|---|
+| [Getting Started](Sources/InAppPurchase/InAppPurchase.docc/GettingStarted.md) | Add the package, create and start the store, gate a view. |
+| [Delivering Transactions](Sources/InAppPurchase/InAppPurchase.docc/DeliveringTransactions.md) | The handler contract and each kind of product. |
+| [Gating Features](Sources/InAppPurchase/InAppPurchase.docc/GatingFeatures.md) | Entitlements, grace periods, bundles, non-renewing subscriptions, restore. |
+| [Handling Errors](Sources/InAppPurchase/InAppPurchase.docc/HandlingErrors.md) | `PurchaseError`, the codes an app acts on, load failures. |
+| [Building a Paywall](Sources/InAppPurchaseUI/InAppPurchaseUI.docc/BuildingAPaywall.md) | StoreKit views, custom purchase buttons, visionOS, refreshing on foreground. |
+| [Testing Purchases](Sources/InAppPurchaseTesting/InAppPurchaseTesting.docc/TestingPurchases.md) | `MockPurchaseClient`, testing a handler, previews. |
+
+## Products
+
+| Product | Add it to |
+|---|---|
+| `InAppPurchase` | Any target that loads products, purchases, or reads entitlements. No UI framework behind it. |
+| `InAppPurchaseUI` | A SwiftUI target that purchases through `@Environment(\.purchase)` or refreshes on foreground. Depends on `InAppPurchase`. |
+| `InAppPurchaseTesting` | A test target, or a target whose SwiftUI previews need `MockPurchaseClient`. Depends on `InAppPurchase`. |
+
+## Requirements
+
+- Swift 6.4 tools, Swift 6 language mode
+- iOS 27 / macOS 27 / tvOS 27 / visionOS 27 / watchOS 27
+- No dependencies
 
 ## Out of scope
 
