@@ -1,15 +1,25 @@
 # ``InAppPurchaseUI``
 
-SwiftUI views for purchase flows.
+SwiftUI integration for a purchase store.
 
 ## Overview
 
-``TipJarView`` offers consumable products from a ``/InAppPurchase/PurchaseStore``. The app supplies
-the view for each tip and the text around them through ``TipJarCopy``.
+A purchase started from a view goes through SwiftUI's `@Environment(\.purchase)`, which shows the
+confirmation sheet in the scene the customer is looking at and is the only purchase path on
+visionOS. ``InAppPurchase/PurchaseStore/purchase(_:using:options:)`` routes it through the store,
+so the transaction is delivered and finished like any other.
+
+``SwiftUICore/View/refreshingPurchases(_:)`` refreshes the store whenever the scene becomes active.
+
+For a ready-made storefront, use StoreKit's `StoreView`, `ProductView`, or `SubscriptionStoreView`.
+Their purchases reach the store as transaction updates.
 
 ## Topics
 
-### Views
+### Purchasing
 
-- ``TipJarView``
-- ``TipJarCopy``
+- ``InAppPurchase/PurchaseStore/purchase(_:using:options:)``
+
+### Refreshing
+
+- ``SwiftUICore/View/refreshingPurchases(_:)``

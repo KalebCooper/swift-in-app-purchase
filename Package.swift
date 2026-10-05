@@ -3,7 +3,7 @@
 import PackageDescription
 
 // Three products, one dependency direction. InAppPurchase is the StoreKit 2 client, its observable
-// state, and its value types, with no UI framework behind it. InAppPurchaseUI is the SwiftUI tip jar
+// state, and its value types, with no UI framework behind it. InAppPurchaseUI is the SwiftUI bridge
 // and InAppPurchaseTesting is the mock client; both depend on the core and nothing depends on them.
 let package = Package(
   name: "swift-in-app-purchase",

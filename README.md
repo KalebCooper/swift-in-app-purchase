@@ -6,18 +6,18 @@
 In-app purchases for Swift apps, built on StoreKit 2.
 
 `PurchaseStore` is the observable state a view renders: the products on offer and what the customer
-owns. It reads from the App Store in an app and from `MockPurchaseClient` in a test or preview. A
-SwiftUI tip jar ships in a separate product.
+owns. It reads from the App Store in an app and from `MockPurchaseClient` in a test or preview. The
+SwiftUI purchase and foreground-refresh bridge ships in a separate product.
 
-> **Status:** pre-release. `PurchaseStore` is implemented and tested against the mock client; the
-> App Store client is not yet implemented, and no version has been tagged.
+> **Status:** pre-release. `PurchaseStore` and the App Store client are implemented, the store is
+> tested against the mock client, and no version has been tagged.
 
 ## Installation
 
 | Product | Add it to |
 |---|---|
 | `InAppPurchase` | Any target that loads products, purchases, or reads entitlements. No UI framework behind it. |
-| `InAppPurchaseUI` | A SwiftUI target that shows a tip jar. Depends on `InAppPurchase`. |
+| `InAppPurchaseUI` | A SwiftUI target that purchases through `@Environment(\.purchase)` or refreshes on foreground. Depends on `InAppPurchase`. |
 | `InAppPurchaseTesting` | A test or preview target. Depends on `InAppPurchase`. |
 
 Versions follow semantic versioning, and every change is recorded in [CHANGELOG.md](CHANGELOG.md).
