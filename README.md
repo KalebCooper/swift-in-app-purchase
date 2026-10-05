@@ -9,8 +9,8 @@ In-app purchases for Swift apps, built on StoreKit 2.
 owns. It reads from the App Store in an app and from `MockPurchaseClient` in a test or preview. A
 SwiftUI tip jar ships in a separate product.
 
-> **Status:** pre-release. The public surface is declared but not yet implemented, and no version
-> has been tagged.
+> **Status:** pre-release. `PurchaseStore` is implemented and tested against the mock client; the
+> App Store client is not yet implemented, and no version has been tagged.
 
 ## Installation
 

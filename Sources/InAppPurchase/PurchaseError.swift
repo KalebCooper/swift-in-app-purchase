@@ -16,7 +16,10 @@ public struct PurchaseError: Error, Sendable {
 
   /// A kind of purchase failure.
   public struct Code: Hashable, RawRepresentable, Sendable {
-    /// The app's handler threw, so the transaction is not finished and is delivered again.
+    /// The app's handler threw, or there is no handler to deliver a consumable or non-renewing
+    /// subscription, so the transaction is not finished and is delivered again. The handler's own
+    /// error is not carried in ``PurchaseError/underlying``, because it need not be `Sendable`;
+    /// log it in the handler.
     public static let deliveryFailed = Code(rawValue: "deliveryFailed")
     /// There is no scene to present the purchase sheet from.
     public static let invalidPresentationContext = Code(rawValue: "invalidPresentationContext")
