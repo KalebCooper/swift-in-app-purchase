@@ -25,7 +25,7 @@ public final class MockPurchaseClient: PurchaseClient {
   public init(
     entitlements: [PurchaseTransaction] = [],
     failure: PurchaseError? = nil,
-    outcome: PurchaseOutcome = .cancelled,
+    outcome: PurchaseOutcome = .userCancelled,
     products: [PurchaseProduct] = []
   ) {
     self.entitlements = entitlements

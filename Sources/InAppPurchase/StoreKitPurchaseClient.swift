@@ -2,12 +2,8 @@ import StoreKit
 
 /// A ``PurchaseClient`` backed by StoreKit 2.
 public struct StoreKitPurchaseClient: PurchaseClient {
-  private let verificationPolicy: VerificationPolicy
-
-  /// Creates a client that applies `verificationPolicy` to every transaction it reads.
-  public init(verificationPolicy: VerificationPolicy = .rejectUnverified) {
-    self.verificationPolicy = verificationPolicy
-  }
+  /// Creates a client that reads from the App Store.
+  public init() {}
 
   /// Returns a transaction for each product the customer is currently entitled to.
   public func currentEntitlements() async -> [PurchaseTransaction] {

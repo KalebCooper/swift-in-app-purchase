@@ -5,3 +5,10 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
+
+- Added `PurchaseError` with an open `Code` and an `underlying` error. `PurchaseError.Code` gains `deliveryFailed`, `invalidPresentationContext`, `networkUnavailable`, `notAvailableInStorefront`, `notEntitled`, `paymentMethodBindingRequired`, `unknown`, `unsupported`, `unverified`, and `userCancelled`. `failedVerification` is now `unverified`, `system` is now `systemError`, and `PurchaseError` no longer carries a `productID`.
+- Added `TransactionEvent`, which reports a purchase and a revocation as separate cases.
+- Added `Entitlement`, a set of product identifiers that each unlock the same feature.
+- `PurchaseOutcome` cases are now `pending`, `success`, and `userCancelled`, and the enum is no longer `Hashable`.
+- `PurchaseTransaction` gains `appAccountToken`, `isUpgraded`, and `originalID`, and `purchaseDate` now defaults to the current date. `PurchaseProduct.price` now defaults to zero.
+- Removed `VerificationPolicy`. Unverified transactions are never delivered or counted.

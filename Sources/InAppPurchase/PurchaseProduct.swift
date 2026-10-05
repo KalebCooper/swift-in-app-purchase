@@ -25,7 +25,7 @@ public struct PurchaseProduct: Hashable, Identifiable, Sendable {
     displayName: String,
     displayPrice: String,
     id: String,
-    price: Decimal,
+    price: Decimal = 0,
     storeKitProduct: Product? = nil,
     type: Product.ProductType
   ) {

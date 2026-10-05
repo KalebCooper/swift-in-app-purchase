@@ -3,10 +3,17 @@ import StoreKit
 
 /// A verified record of a purchase, as a value a test can construct.
 public struct PurchaseTransaction: Hashable, Identifiable, Sendable {
+  /// The token the app attached to the purchase, or `nil` if it attached none.
+  public let appAccountToken: UUID?
   /// When a subscription expires, or `nil` for a product that does not.
   public let expirationDate: Date?
   /// The transaction's unique identifier.
   public let id: UInt64
+  /// Whether the customer upgraded to another subscription in the same group.
+  public let isUpgraded: Bool
+  /// The identifier of the first transaction in this one's renewal chain. It equals ``id`` for a
+  /// transaction that is not a renewal.
+  public let originalID: UInt64
   /// The identifier of the product purchased.
   public let productID: String
   /// What kind of product was purchased.
@@ -22,18 +29,26 @@ public struct PurchaseTransaction: Hashable, Identifiable, Sendable {
   public let storeKitTransaction: Transaction?
 
   /// Creates a transaction record.
+  ///
+  /// - Parameter originalID: The first transaction in the renewal chain. Pass `nil` to use `id`.
   public init(
+    appAccountToken: UUID? = nil,
     expirationDate: Date? = nil,
     id: UInt64,
+    isUpgraded: Bool = false,
+    originalID: UInt64? = nil,
     productID: String,
     productType: Product.ProductType,
-    purchaseDate: Date,
+    purchaseDate: Date = Date(),
     quantity: Int = 1,
     revocationDate: Date? = nil,
     storeKitTransaction: Transaction? = nil
   ) {
+    self.appAccountToken = appAccountToken
     self.expirationDate = expirationDate
     self.id = id
+    self.isUpgraded = isUpgraded
+    self.originalID = originalID ?? id
     self.productID = productID
     self.productType = productType
     self.purchaseDate = purchaseDate
