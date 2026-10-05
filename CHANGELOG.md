@@ -6,6 +6,7 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+- Added an example app, `Examples/PurchaseExample`. It sells tips, Pro as a one-time purchase or a subscription, and consumable coins through one `PurchaseStore` and one transaction handler, runs in the simulator against a bundled StoreKit configuration with no signing, and tests its coin delivery with `MockPurchaseClient`.
 - Documented purchase integration: the README now covers starting the store, the delivery rules, a tip jar, subscription gating, consumable coins, testing with `MockPurchaseClient`, and previews with `PurchaseStore.preview`, and each module's documentation catalog lists its public types.
 - `InAppPurchaseUI` replaces `TipJarView` and `TipJarCopy` with a bridge to SwiftUI. `PurchaseStore.purchase(_:using:options:)` purchases through the view's `@Environment(\.purchase)`, which is the purchase path on visionOS, and `refreshingPurchases(_:)` refreshes the store whenever the scene becomes active. For a ready-made storefront, use StoreKit's `StoreView`.
 - `PurchaseStore(productIDs:)` now sells through the App Store. Only transactions that pass StoreKit's verification are delivered or counted; a purchase that fails verification throws `unverified`. Every `StoreKitError` and `Product.PurchaseError` maps to a `PurchaseError.Code` with the StoreKit error kept as `underlying`, and an error StoreKit adds later maps to `unknown`. A second store listening for transactions in the same process logs a fault.
