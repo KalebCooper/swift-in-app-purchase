@@ -8,7 +8,7 @@ import PackageDescription
 let package = Package(
   name: "swift-in-app-purchase",
   platforms: [
-    .iOS(.v27), .macOS(.v27), .tvOS(.v27), .visionOS(.v27), .watchOS(.v27),
+    .iOS(.v26), .macCatalyst(.v26), .macOS(.v26), .tvOS(.v26), .visionOS(.v26), .watchOS(.v26),
   ],
   products: [
     .library(name: "InAppPurchase", targets: ["InAppPurchase"]),

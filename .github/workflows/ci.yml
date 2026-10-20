@@ -12,7 +12,7 @@ on:
 jobs:
   apple:
     name: Build (iOS) & Test (macOS)
-    # The OS 27 floor needs the OS 27 SDKs, which GitHub's Xcode 27 image supplies.
+    # Tools 6.4 needs Xcode 27's toolchain, which GitHub's Xcode 27 image supplies.
     # https://github.com/actions/runner-images/blob/main/images/macos/xcode-27-arm64-Readme.md
     runs-on: xcode-27
     timeout-minutes: 30

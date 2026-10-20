@@ -6,28 +6,41 @@ import Testing
 @Suite struct StoreKitErrorMappingTests {
   private struct Cause: Error {}
 
-  static let storeKitErrors: [(StoreKitError, PurchaseError.Code)] = [
-    (.invalidPresentationContext, .invalidPresentationContext),
-    (.networkError(URLError(.notConnectedToInternet)), .networkUnavailable),
-    (.notAvailableInStorefront, .notAvailableInStorefront),
-    (.notEntitled, .notEntitled),
-    (.systemError(Cause()), .systemError),
-    (.unknown, .unknown),
-    (.unsupported, .unsupported),
-    (.userCancelled, .userCancelled),
-  ]
+  // `invalidPresentationContext` arrived in OS 27, so it joins the list only where it exists.
+  static let storeKitErrors: [(StoreKitError, PurchaseError.Code)] = {
+    var errors: [(StoreKitError, PurchaseError.Code)] = [
+      (.networkError(URLError(.notConnectedToInternet)), .networkUnavailable),
+      (.notAvailableInStorefront, .notAvailableInStorefront),
+      (.notEntitled, .notEntitled),
+      (.systemError(Cause()), .systemError),
+      (.unknown, .unknown),
+      (.unsupported, .unsupported),
+      (.userCancelled, .userCancelled),
+    ]
+    if #available(iOS 27.0, macOS 27.0, tvOS 27.0, visionOS 27.0, watchOS 27.0, *) {
+      errors.append((.invalidPresentationContext, .invalidPresentationContext))
+    }
+    return errors
+  }()
 
-  static let purchaseErrors: [(Product.PurchaseError, PurchaseError.Code)] = [
-    (.ineligibleForOffer, .unknown),
-    (.invalidOfferIdentifier, .unknown),
-    (.invalidOfferPrice, .unknown),
-    (.invalidOfferSignature, .unknown),
-    (.invalidQuantity, .unknown),
-    (.missingOfferParameters, .unknown),
-    (.paymentMethodBindingConfigurationRequired, .paymentMethodBindingRequired),
-    (.productUnavailable, .productUnavailable),
-    (.purchaseNotAllowed, .purchaseNotAllowed),
-  ]
+  // `paymentMethodBindingConfigurationRequired` arrived in OS 26.5, so it joins the list only
+  // where it exists.
+  static let purchaseErrors: [(Product.PurchaseError, PurchaseError.Code)] = {
+    var errors: [(Product.PurchaseError, PurchaseError.Code)] = [
+      (.ineligibleForOffer, .unknown),
+      (.invalidOfferIdentifier, .unknown),
+      (.invalidOfferPrice, .unknown),
+      (.invalidOfferSignature, .unknown),
+      (.invalidQuantity, .unknown),
+      (.missingOfferParameters, .unknown),
+      (.productUnavailable, .productUnavailable),
+      (.purchaseNotAllowed, .purchaseNotAllowed),
+    ]
+    if #available(iOS 26.5, macOS 26.5, tvOS 26.5, visionOS 26.5, watchOS 26.5, *) {
+      errors.append((.paymentMethodBindingConfigurationRequired, .paymentMethodBindingRequired))
+    }
+    return errors
+  }()
 
   @Test(arguments: storeKitErrors)
   func aStoreKitErrorMapsToItsCodeAndIsKept(error: StoreKitError, code: PurchaseError.Code) {

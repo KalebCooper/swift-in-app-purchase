@@ -354,7 +354,7 @@ your own development team on the target locally.
 ## Requirements
 
 - Swift 6.4 tools, Swift 6 language mode
-- iOS 27 / macOS 27 / tvOS 27 / visionOS 27 / watchOS 27
+- iOS 26 / Mac Catalyst 26 / macOS 26 / tvOS 26 / visionOS 26 / watchOS 26
 - No dependencies
 
 ## Out of scope
