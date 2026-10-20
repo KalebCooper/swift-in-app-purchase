@@ -6,7 +6,7 @@
 In-app purchases for Swift apps, built on StoreKit 2: one observable store that delivers every
 transaction and keeps entitlements current.
 
-> **Status:** 0.1.0. The store, the App Store client, the SwiftUI bridge, and the mock client are
+> **Status:** 0.2.0. The store, the App Store client, the SwiftUI bridge, and the mock client are
 > implemented, and the store is tested against the mock client.
 
 ## Features
@@ -29,7 +29,7 @@ Add the package:
 
 ```swift
 dependencies: [
-  .package(url: "https://github.com/KalebCooper/swift-in-app-purchase.git", from: "0.1.0")
+  .package(url: "https://github.com/KalebCooper/swift-in-app-purchase.git", from: "0.2.0")
 ]
 ```
 
