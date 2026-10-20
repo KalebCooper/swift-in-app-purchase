@@ -284,7 +284,7 @@ public final class PurchaseStore {
 
   /// Retries transactions left unfinished, recomputes ``purchasedProductIDs``, and reloads
   /// ``products`` if the last load failed or left a requested product missing. Call it when the
-  /// app returns to the foreground.
+  /// app returns to the foreground. A product that stays missing is reloaded on every refresh.
   public func refresh() async {
     await recomputeEntitlements()
     await drainUnfinished()

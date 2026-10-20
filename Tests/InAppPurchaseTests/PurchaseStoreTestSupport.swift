@@ -198,6 +198,8 @@ final class GatedProductsClient: PurchaseClient {
   func products(for ids: [String]) async throws(PurchaseError) -> [PurchaseProduct] {
     productsCalls.withLock { $0 += 1 }
     await gate.wait()
+    // A load that runs in a cancelled caller's task fails here, as StoreKit's own request would.
+    if Task.isCancelled { throw PurchaseError(.unknown, underlying: CancellationError()) }
     return try await mock.products(for: ids)
   }
 

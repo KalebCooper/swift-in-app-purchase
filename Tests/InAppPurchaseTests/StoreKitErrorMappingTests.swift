@@ -102,8 +102,9 @@ import Testing
 
   @Test(arguments: [PurchaseError.Code.networkUnavailable, .userCancelled])
   func aPurchaseErrorKeepsItsCode(code: PurchaseError.Code) {
-    let mapped = PurchaseError(converting: PurchaseError(code) as any Error)
+    let mapped = PurchaseError(converting: PurchaseError(code, underlying: Cause()) as any Error)
     #expect(mapped.code == code)
+    #expect(mapped.underlying is Cause)
   }
 
   @Test func anErrorOfAnotherTypeMapsToUnknownWithNoUnderlyingError() {
