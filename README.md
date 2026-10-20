@@ -342,6 +342,13 @@ owned identifiers to preview the unlocked state. A preview store completes no pu
 ```
 Source: [Examples/PurchaseExample/PurchaseExample/Pro/ProGate.swift](Examples/PurchaseExample/PurchaseExample/Pro/ProGate.swift)
 
+### Read the store's log
+
+The store logs under the subsystem `dev.cooperlabs.InAppPurchase`; filter on it in Xcode's console
+or in Console. Info-level lines record every entitlement read and whether it was applied, every
+transaction update, every unfinished transaction collected, every finish, and how StoreKit ended
+each purchase. They name transactions and products by identifier only, never the customer.
+
 ## The rules
 
 The long form, with the reasons, is in the articles listed under [Documentation](#documentation).

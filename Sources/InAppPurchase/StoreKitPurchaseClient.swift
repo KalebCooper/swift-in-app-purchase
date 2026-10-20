@@ -200,4 +200,4 @@ extension PurchaseTransaction {
   }
 }
 
-private let logger = Logger(subsystem: "InAppPurchase", category: "StoreKitPurchaseClient")
+private let logger = Logger(subsystem: logSubsystem, category: "StoreKitPurchaseClient")

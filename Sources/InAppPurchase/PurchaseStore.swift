@@ -211,6 +211,7 @@ public final class PurchaseStore {
     listenerTask = Task { @MainActor [weak self] in
       for await transaction in updates {
         guard let self else { return }
+        logger.info("Received update \(Self.describe(transaction), privacy: .public).")
         _ = delivery(of: transaction)
       }
     }
@@ -284,11 +285,23 @@ public final class PurchaseStore {
     do {
       outcome = try await client.purchase(product, options: options, purchaser: purchaser)
     } catch {
+      logger.info(
+        """
+        StoreKit's purchase of \(product.id, privacy: .public) threw \
+        \(error.code.rawValue, privacy: .public).
+        """
+      )
       if let recorded = try await recordedPurchase(of: product.id, since: start) {
         return .success(recorded)
       }
       throw error
     }
+    logger.info(
+      """
+      StoreKit's purchase of \(product.id, privacy: .public) \
+      \(Self.describe(outcome), privacy: .public).
+      """
+    )
     if case .userCancelled = outcome,
       let recorded = try await recordedPurchase(of: product.id, since: start)
     {
@@ -333,8 +346,26 @@ public final class PurchaseStore {
           && delivered.transaction.purchaseDate >= start
       }
       .max { $0.transaction.purchaseDate < $1.transaction.purchaseDate }
-    guard let match else { return nil }
-    guard match.isFinished else { throw PurchaseError(.deliveryFailed) }
+    guard let match else {
+      logger.info(
+        "No purchase of \(productID, privacy: .public) was recorded since the purchase began.")
+      return nil
+    }
+    guard match.isFinished else {
+      logger.info(
+        """
+        StoreKit recorded \(Self.describe(match.transaction), privacy: .public) during a \
+        purchase it did not report, but its delivery failed.
+        """
+      )
+      throw PurchaseError(.deliveryFailed)
+    }
+    logger.info(
+      """
+      StoreKit recorded \(Self.describe(match.transaction), privacy: .public) during a \
+      purchase it did not report. It was delivered, and the purchase returns success.
+      """
+    )
     return match.transaction
   }
 
@@ -428,6 +459,7 @@ public final class PurchaseStore {
       return false
     }
     await client.finish(transaction)
+    logger.info("Finished \(Self.describe(transaction), privacy: .public).")
     deliveredKeys.insert(key)
     if transaction.revocationDate == nil,
       transaction.purchaseDate
@@ -447,6 +479,10 @@ public final class PurchaseStore {
   @discardableResult
   private func drainUnfinished() async -> [(transaction: PurchaseTransaction, isFinished: Bool)] {
     let unfinished = await client.unfinished()
+    if unfinished.isEmpty { logger.info("Collected no unfinished transactions.") }
+    for transaction in unfinished {
+      logger.info("Collected unfinished \(Self.describe(transaction), privacy: .public).")
+    }
     let queued = unfinished.map { ($0, delivery(of: $0)) }
     guard !Self.isDelivering else { return [] }
     var delivered: [(transaction: PurchaseTransaction, isFinished: Bool)] = []
@@ -473,8 +509,24 @@ public final class PurchaseStore {
     let client = client
     let task = Task { @MainActor [weak self] in
       let transactions = await client.currentEntitlements()
-      guard let self, generation == entitlementGeneration else { return }
+      guard let self else { return }
+      let returned = Self.describe(transactions)
+      guard generation == entitlementGeneration else {
+        logger.info(
+          """
+          Entitlement read \(generation, privacy: .public) returned \(returned, privacy: .public). \
+          It was superseded by read \(self.entitlementGeneration, privacy: .public) and not applied.
+          """
+        )
+        return
+      }
       apply(entitlements: transactions)
+      logger.info(
+        """
+        Entitlement read \(generation, privacy: .public) returned \(returned, privacy: .public). \
+        It was applied, owning \(Self.describe(self.purchasedProductIDs), privacy: .public).
+        """
+      )
     }
     recomputeTask = task
     var awaited = task
@@ -517,6 +569,30 @@ public final class PurchaseStore {
       do { try await sleep(delay) } catch { return }
       guard !Task.isCancelled, let self else { return }
       await recomputeEntitlements()
+    }
+  }
+
+  // MARK: Logging
+
+  /// Names `transaction` for the log by its identifier and product, which identify no customer.
+  private static func describe(_ transaction: PurchaseTransaction) -> String {
+    let kind = transaction.revocationDate == nil ? "transaction" : "revocation"
+    return "\(kind) \(transaction.id) of \(transaction.productID)"
+  }
+
+  private static func describe(_ transactions: [PurchaseTransaction]) -> String {
+    transactions.isEmpty ? "nothing" : transactions.map(describe).joined(separator: ", ")
+  }
+
+  private static func describe(_ productIDs: Set<String>) -> String {
+    productIDs.isEmpty ? "nothing" : productIDs.sorted().joined(separator: ", ")
+  }
+
+  private static func describe(_ outcome: PurchaseOutcome) -> String {
+    switch outcome {
+    case .pending: "is pending approval"
+    case .success(let transaction): "succeeded with \(describe(transaction))"
+    case .userCancelled: "was cancelled"
     }
   }
 
@@ -569,4 +645,7 @@ public final class PurchaseStore {
   }
 }
 
-private let logger = Logger(subsystem: "InAppPurchase", category: "PurchaseStore")
+/// The subsystem every line the package logs is filed under, so Console can filter to the package.
+let logSubsystem = "dev.cooperlabs.InAppPurchase"
+
+private let logger = Logger(subsystem: logSubsystem, category: "PurchaseStore")

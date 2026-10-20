@@ -141,3 +141,14 @@ Verification is always strict. A transaction that fails StoreKit's verification 
 dropped: it is never delivered, never counted in ``PurchaseStore/purchasedProductIDs``, and never
 finished. A purchase whose transaction fails verification throws
 ``PurchaseError/Code/unverified``.
+
+### Reading the store's log
+
+The store logs under the subsystem `dev.cooperlabs.InAppPurchase`, so a filter on it in Xcode's
+console or in Console shows only the package. Faults and errors report misuse and failed
+deliveries. Info-level lines trace the work behind each change to
+``PurchaseStore/purchasedProductIDs``: every entitlement read, with the transactions it returned and
+whether it was applied or superseded by a newer read; every transaction update received; every
+transaction collected from the unfinished ones; every finish; and how StoreKit ended each purchase,
+including a purchase it recorded but did not report. Lines name transactions by their identifier
+and product identifier only, never anything about the customer.

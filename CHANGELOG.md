@@ -6,6 +6,7 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+- Changed the log subsystem from `InAppPurchase` to `dev.cooperlabs.InAppPurchase`, and added info-level lines for every entitlement read, with the transactions it returned and whether it was applied or superseded; every transaction update received; every unfinished transaction collected; every finish; and how StoreKit ended each purchase. Lines carry transaction and product identifiers only.
 - Changed `PurchaseStore`'s purchase methods to return `.success` for a purchase StoreKit recorded but reported as cancelled or failed, as it can when the app leaves the foreground while StoreKit's confirmation is on screen. After a purchase returns `.userCancelled` or throws, the store collects unfinished transactions and recomputes entitlements, and returns the delivered purchase of the same product dated at or after the call began, or throws `deliveryFailed` if its delivery failed. An earlier purchase of the product never counts.
 
 ## 0.1.0 - 2026-10-20
