@@ -6,8 +6,8 @@
 In-app purchases for Swift apps, built on StoreKit 2: one observable store that delivers every
 transaction and keeps entitlements current.
 
-> **Status:** pre-release. The store, the App Store client, the SwiftUI bridge, and the mock client
-> are implemented and the store is tested against the mock client. No version has been tagged.
+> **Status:** 0.1.0. The store, the App Store client, the SwiftUI bridge, and the mock client are
+> implemented, and the store is tested against the mock client.
 
 ## Features
 
@@ -25,16 +25,16 @@ transaction and keeps entitlements current.
 
 ## Quick start
 
-Add the package. No version is tagged yet, so depend on the `main` branch; once the first release is
-tagged, switch to `from:` that version.
+Add the package:
 
 ```swift
 dependencies: [
-  .package(url: "https://github.com/KalebCooper/swift-in-app-purchase.git", branch: "main")
+  .package(url: "https://github.com/KalebCooper/swift-in-app-purchase.git", from: "0.1.0")
 ]
 ```
 
-Versions follow semantic versioning, and every change is recorded in [CHANGELOG.md](CHANGELOG.md).
+Versions follow semantic versioning, and every change is recorded in [CHANGELOG.md](CHANGELOG.md). A
+0.x minor release may break the API, and the changelog says how to adapt.
 
 Create one store with the identifier of every product you sell:
 

@@ -86,8 +86,8 @@ func buy(_ product: PurchaseProduct) async throws(PurchaseError) -> PurchaseOutc
 }
 ```
 
-It returns the same outcomes and throws the same errors as ``PurchaseStore/purchase(_:options:)``,
-which is unavailable on visionOS, where a purchase needs its scene. For a context
+The `buy(_:)` above returns `nil` when no scene is active. Otherwise it returns the same outcomes and
+throws the same errors as ``PurchaseStore/purchase(_:options:)``, which is unavailable on visionOS, where a purchase needs its scene. For a context
 `InAppPurchaseUI` does not cover, build a ``Purchaser`` around the StoreKit purchase call and pass
 it to ``PurchaseStore/purchase(_:using:options:)``.
 
