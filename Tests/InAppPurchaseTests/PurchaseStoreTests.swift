@@ -1,8 +1,22 @@
 import Foundation
 import InAppPurchase
 import InAppPurchaseTesting
+import Observation
 import StoreKit
+import Synchronization
 import Testing
+
+/// Records whether an observation's change handler ran.
+private final class ChangeFlag: Sendable {
+  private let value = Mutex(false)
+
+  /// Whether ``set()`` has been called.
+  var isSet: Bool { value.withLock { $0 } }
+
+  func set() {
+    value.withLock { $0 = true }
+  }
+}
 
 @MainActor
 @Suite(.timeLimit(.minutes(1))) struct PurchaseStoreTests {
@@ -371,15 +385,115 @@ import Testing
     let recorder = HandlerRecorder(mock: mock)
     let store = makeStore(mock)
     await store.start(handling: recorder.handle)
+    #expect(store.pendingProductIDs.isEmpty)
 
     let outcome = try await store.purchase(pro)
     if case .pending = outcome {} else { Issue.record("expected .pending") }
     #expect(recorder.events.isEmpty)
+    #expect(store.pendingProductIDs == ["pro.lifetime"])
 
     mock.send(lifetime(1))
 
     #expect(try await mock.nextFinishedTransaction() == lifetime(1))
     #expect(recorder.events.map(\.purchased) == [lifetime(1)])
+    #expect(store.pendingProductIDs.isEmpty)
+  }
+
+  // MARK: Pending
+
+  @Test func aPendingPurchaseJoinsThePendingProducts() async throws {
+    let mock = MockPurchaseClient()
+    mock.purchaseResults["pro.lifetime"] = .success(.pending)
+    let store = makeStore(mock)
+    await store.start()
+
+    _ = try await store.purchase(pro)
+
+    #expect(store.pendingProductIDs == ["pro.lifetime"])
+  }
+
+  @Test func anApprovalLeavesThePendingProducts() async throws {
+    let mock = MockPurchaseClient()
+    mock.purchaseResults["pro.lifetime"] = .success(.pending)
+    let store = makeStore(mock)
+    await store.start()
+    _ = try await store.purchase(pro)
+
+    mock.send(lifetime(1))
+
+    #expect(try await mock.nextFinishedTransaction() == lifetime(1))
+    #expect(store.pendingProductIDs.isEmpty)
+  }
+
+  @Test func anApprovedConsumableWithNoHandlerLeavesThePendingProducts() async throws {
+    let mock = MockPurchaseClient()
+    mock.purchaseResults["tip.small"] = .success(.pending)
+    let store = makeStore(mock)
+    await store.start()
+    _ = try await store.purchase(small)
+    #expect(store.pendingProductIDs == ["tip.small"])
+
+    mock.send(tip(1))
+    await store.refresh()
+
+    #expect(store.pendingProductIDs.isEmpty)
+    #expect(mock.finishedTransactions.isEmpty)
+  }
+
+  @Test func anOwnedProductLeavesThePendingProductsOnRefresh() async throws {
+    let mock = MockPurchaseClient()
+    mock.purchaseResults["pro.lifetime"] = .success(.pending)
+    let store = makeStore(mock)
+    await store.start()
+    _ = try await store.purchase(pro)
+
+    mock.entitlements = [lifetime(1)]
+    await store.refresh()
+
+    #expect(store.pendingProductIDs.isEmpty)
+  }
+
+  @Test func aRevocationDoesNotTouchThePendingProducts() async throws {
+    let mock = MockPurchaseClient()
+    mock.purchaseResults["pro.lifetime"] = .success(.pending)
+    let store = makeStore(mock)
+    await store.start()
+    _ = try await store.purchase(pro)
+    let revocation = PurchaseTransaction(
+      id: 9,
+      productID: "pro.lifetime",
+      productType: .nonConsumable,
+      purchaseDate: purchaseDate,
+      revocationDate: purchaseDate.addingTimeInterval(60)
+    )
+
+    mock.send(revocation)
+
+    #expect(try await mock.nextFinishedTransaction() == revocation)
+    #expect(store.pendingProductIDs == ["pro.lifetime"])
+  }
+
+  @Test func aDeliveryForAProductNotPendingDoesNotNotifyPendingObservers() async throws {
+    let mock = MockPurchaseClient()
+    mock.purchaseResults["tip.small"] = .success(.pending)
+    let store = makeStore(mock)
+    await store.start()
+    _ = try await store.purchase(small)
+    let changed = ChangeFlag()
+    withObservationTracking {
+      _ = store.pendingProductIDs
+    } onChange: {
+      changed.set()
+    }
+
+    mock.send(lifetime(1))
+    #expect(try await mock.nextFinishedTransaction() == lifetime(1))
+    // The delivery's entitlement read, which subtracts owned products, has run once this returns.
+    await store.refresh()
+
+    #expect(store.purchasedProductIDs == ["pro.lifetime"])
+    #expect(store.pendingProductIDs == ["tip.small"])
+    #expect(changed.isSet == false)
   }
 
   @Test func aCancelledPurchasePassesThrough() async throws {

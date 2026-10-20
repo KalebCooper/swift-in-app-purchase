@@ -170,6 +170,11 @@ private func buy() async {
 ```
 Source: [Examples/PurchaseExample/PurchaseExample/Pro/PaywallButton.swift](Examples/PurchaseExample/PurchaseExample/Pro/PaywallButton.swift)
 
+A `.pending` purchase, such as an Ask to Buy request, puts its product in `store.pendingProductIDs`
+until its transaction arrives or the customer owns it, so a view can show the request as waiting
+rather than offering the purchase again. The set lives in memory only: a relaunch forgets it, a
+decline sends nothing, and purchases started in StoreKit's views are not tracked.
+
 Cancelling the sheet returns `.userCancelled` rather than throwing; the error arm is a safeguard.
 
 ### Deliver consumables

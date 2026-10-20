@@ -6,6 +6,7 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+- Added `PurchaseStore.pendingProductIDs`, the products whose purchase awaits approval, such as an Ask to Buy request.
 - Added `PurchaseStore.loadProducts()`, which loads products or joins the load in progress, returns them, and throws on failure while keeping the products already loaded. `refresh()` now also reloads when a requested product is missing.
 - A `Purchaser` that throws a `PurchaseError` now has that error passed through unchanged, so its code is kept.
 - Added `Purchaser` and `PurchaseStore.purchase(_:using:options:)`, which purchase in a presentation context the app supplies, and, in `InAppPurchaseUI`, `purchase(_:confirmIn:options:)` for a `UIScene`, a `UIViewController`, or an `NSWindow`. On visionOS, a purchase can now be confirmed in a scene as well as through `@Environment(\.purchase)`.

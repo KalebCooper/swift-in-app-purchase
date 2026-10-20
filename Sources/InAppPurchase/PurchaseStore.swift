@@ -44,6 +44,20 @@ public final class PurchaseStore {
   /// The requested product identifiers the store does not sell, as of the last successful load.
   /// ``refresh()`` loads again while any identifier is missing.
   public private(set) var missingProductIDs: Set<String> = []
+  /// The identifiers of the products whose purchase awaits approval, such as an Ask to Buy
+  /// request.
+  ///
+  /// A product joins when a purchase through ``purchase(_:options:)`` or
+  /// ``purchase(_:using:options:)`` returns ``PurchaseOutcome/pending``, and leaves when a
+  /// transaction for it arrives, whether or not its delivery succeeds, or when the customer is
+  /// found to own it. A revocation leaves the set as it is.
+  ///
+  /// The set is kept in memory only, because StoreKit cannot list the requests awaiting approval.
+  /// A relaunch forgets them, and an approval still arrives as a transaction. A decline sends
+  /// nothing, so a declined product stays in the set until the app relaunches. A purchase started
+  /// in one of StoreKit's views, such as `StoreView`, never reports pending to the store, so its
+  /// product never joins.
+  public private(set) var pendingProductIDs: Set<String> = []
   /// The products on offer, in the order their identifiers were given, as of the last successful
   /// load. A failed load leaves them as they were.
   public private(set) var products: [PurchaseProduct] = []
@@ -256,6 +270,10 @@ public final class PurchaseStore {
       throw PurchaseError(.unsupported)
     }
     let outcome = try await client.purchase(product, options: options, purchaser: purchaser)
+    // Mutating a set in place notifies observers even when nothing changes, so check first.
+    if case .pending = outcome, !pendingProductIDs.contains(product.id) {
+      pendingProductIDs.insert(product.id)
+    }
     guard case .success(let transaction) = outcome else { return outcome }
     guard let delivery = delivery(of: transaction) else { return outcome }
     guard await delivery.value else { throw PurchaseError(.deliveryFailed) }
@@ -307,6 +325,11 @@ public final class PurchaseStore {
   /// in this process, and the running task if it is already queued.
   private func delivery(of transaction: PurchaseTransaction) -> Task<Bool, Never>? {
     let key = DeliveryKey(transaction)
+    // The approval has arrived, so the product is no longer pending even if its delivery fails: a
+    // consumable with no handler is never delivered, and would otherwise stay pending for good.
+    if transaction.revocationDate == nil, pendingProductIDs.contains(transaction.productID) {
+      pendingProductIDs.remove(transaction.productID)
+    }
     if deliveredKeys.contains(key) { return nil }
     if let running = deliveries[key] { return running }
     let previous = queueTail
@@ -394,6 +417,7 @@ public final class PurchaseStore {
     let current = transactions.filter { Self.isCurrent($0) }
     let ids = Set(current.map(\.productID))
     if ids != purchasedProductIDs { purchasedProductIDs = ids }
+    if !pendingProductIDs.isDisjoint(with: ids) { pendingProductIDs.subtract(ids) }
     let now = Date()
     scheduleExpiry(at: current.compactMap(\.expirationDate).filter { $0 > now }.min())
   }

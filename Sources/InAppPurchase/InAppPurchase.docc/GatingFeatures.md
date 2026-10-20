@@ -49,6 +49,35 @@ the foreground.
 The store computes the set at start before anything that waits on the network, so a gated view is
 right offline.
 
+### Purchases awaiting approval
+
+A purchase that needs approval, such as an Ask to Buy request, returns
+``PurchaseOutcome/pending`` and grants nothing yet. Its product joins
+``PurchaseStore/pendingProductIDs``, so a gated view can show that a request is waiting instead of
+offering the purchase again:
+
+```swift
+if store.isEntitled(to: .pro) {
+  ProFeatures()
+} else if store.pendingProductIDs.contains("pro.lifetime") {
+  Text("Waiting for approval")
+} else {
+  PaywallButton()
+}
+```
+
+The product leaves the set when its transaction arrives, whether or not the handler delivers it,
+or when the customer turns out to own it. A revocation does not touch the set.
+
+The set is kept in memory only, because StoreKit cannot list the requests awaiting approval:
+
+- A relaunch forgets every pending product. An approval after the relaunch still arrives as a
+  transaction and reaches the handler as usual.
+- A decline sends nothing, so a declined product stays pending until the app relaunches.
+- Only purchases made through the store's own purchase methods are tracked. A purchase started in
+  one of StoreKit's views, such as `StoreView`, never reports pending to the store, so its product
+  never joins the set.
+
 ### Subscription bundles
 
 Buying a subscription bundle creates one transaction per bundled subscription, so the bundle's own
