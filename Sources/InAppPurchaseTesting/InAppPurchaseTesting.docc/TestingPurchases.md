@@ -131,10 +131,10 @@ mock.purchaseResults["pro.lifetime"] = .success(.pending)
 ```
 
 ``MockPurchaseClient/purchaseRequests`` records every purchase the store asked for, in order, with
-its product and options. The mock ignores the `PurchaseAction` passed to
-`purchase(_:using:options:)` from `InAppPurchaseUI`, so a store backed by it purchases the same
-way from a view or a test; ``MockPurchaseClient/PurchaseRequest/usesPurchaser`` reports whether
-one was passed.
+its product and options. The mock ignores the `Purchaser` behind `purchase(_:using:options:)` and
+`purchase(_:confirmIn:options:)`, so a store backed by it purchases the same way from a view, a
+scene, or a test; ``MockPurchaseClient/PurchaseRequest/usesPurchaser`` reports whether one was
+passed.
 
 ### Preview
 

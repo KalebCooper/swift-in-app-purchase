@@ -6,6 +6,7 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+- Added `Purchaser` and `PurchaseStore.purchase(_:using:options:)`, which purchase in a presentation context the app supplies, and, in `InAppPurchaseUI`, `purchase(_:confirmIn:options:)` for a `UIScene`, a `UIViewController`, or an `NSWindow`. On visionOS, a purchase can now be confirmed in a scene as well as through `@Environment(\.purchase)`.
 - `MockPurchaseClient` keeps entitlements as StoreKit does: a purchased or sent non-consumable or auto-renewable subscription joins `entitlements`, a sent revocation leaves them, and every purchased or sent transaction stays in `unfinishedTransactions` until finished. `purchaseResults` sets an outcome per product, and `purchaseRequests` records every purchase.
 - Lowered the minimum platforms to iOS, Mac Catalyst, macOS, tvOS, visionOS, and watchOS 26.
 - Restructured the README for skimming: features, a quick start, common tasks with code taken from the example app, the delivery rules as a table, how to run the example app, and links to the documentation articles. The long-form rules and recipes now live in the articles.

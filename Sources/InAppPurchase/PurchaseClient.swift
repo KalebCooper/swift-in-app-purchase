@@ -1,9 +1,37 @@
 import StoreKit
 
-/// Starts a StoreKit purchase from the scene the customer is looking at, such as SwiftUI's
-/// `PurchaseAction`. A client given one buys through it instead of choosing a window itself.
-package typealias Purchaser =
-  @MainActor (Product, Set<Product.PurchaseOption>) async throws -> Product.PurchaseResult
+/// Runs a StoreKit purchase in a presentation context the app chooses, such as a scene, a view
+/// controller, a window, or SwiftUI's `PurchaseAction`, so the confirmation sheet appears where
+/// the customer is looking.
+///
+/// Pass one to ``PurchaseStore/purchase(_:using:options:)``. `InAppPurchaseUI` builds one for each
+/// context StoreKit can confirm in; build your own only for a context it does not cover.
+///
+/// ```swift
+/// let purchaser = Purchaser { product, options in
+///   try await product.purchase(confirmIn: scene, options: options)
+/// }
+/// ```
+public struct Purchaser: Sendable {
+  /// Purchases the product with the options and returns StoreKit's result. Runs on the main actor
+  /// because every StoreKit purchase that names a context does.
+  package let purchase:
+    @MainActor @Sendable (Product, Set<Product.PurchaseOption>) async throws
+      -> Product.PurchaseResult
+
+  /// Creates a purchaser that runs `purchase` for each purchase.
+  ///
+  /// - Parameter purchase: Purchases the product with the options in the context of your choice
+  ///   and returns StoreKit's result. Throw StoreKit's error as is; the store maps it to a
+  ///   ``PurchaseError``.
+  public init(
+    _ purchase:
+      @escaping @MainActor @Sendable (Product, Set<Product.PurchaseOption>) async throws
+      -> Product.PurchaseResult
+  ) {
+    self.purchase = purchase
+  }
+}
 
 /// The seam between purchase state and the store that fulfils it.
 ///

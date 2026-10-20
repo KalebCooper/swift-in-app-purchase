@@ -35,7 +35,7 @@ struct StoreKitPurchaseClient: PurchaseClient {
   /// Starts a purchase of `product` with `options` and returns how it ended.
   ///
   /// A product not loaded from the App Store throws ``PurchaseError/Code/productUnavailable``. On
-  /// visionOS a purchase needs the scene's purchaser; without one this throws
+  /// visionOS a purchase needs a purchaser naming its scene; without one this throws
   /// ``PurchaseError/Code/invalidPresentationContext``. A cancellation StoreKit reports by throwing
   /// rather than returning is returned as ``PurchaseOutcome/userCancelled``, so a caller sees every
   /// cancellation in one place.
@@ -120,12 +120,13 @@ struct StoreKitPurchaseClient: PurchaseClient {
     purchaser: Purchaser?
   ) async throws(PurchaseError) -> Product.PurchaseResult {
     do {
-      if let purchaser { return try await purchaser(product, options) }
+      if let purchaser { return try await purchaser.purchase(product, options) }
     } catch {
       throw PurchaseError(converting: error)
     }
     #if os(visionOS)
-    // visionOS has no purchase that picks its own window; only the scene's `PurchaseAction` can.
+    // visionOS has no purchase that picks its own window, so a purchase there needs a purchaser
+    // naming the scene.
     throw PurchaseError(.invalidPresentationContext)
     #else
     do {

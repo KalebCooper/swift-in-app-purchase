@@ -8,8 +8,9 @@ extension PurchaseStore {
   /// ``/InAppPurchase/PurchaseOutcome/success(_:)`` only after the handler delivered the
   /// transaction and it was finished.
   ///
-  /// This is the purchase path on visionOS, where a purchase needs the scene's action. A store
-  /// backed by `MockPurchaseClient` ignores `action`.
+  /// This is the purchase path for a SwiftUI view on every platform, including visionOS. From
+  /// UIKit or AppKit, use `purchase(_:confirmIn:options:)` instead. A store backed by
+  /// `MockPurchaseClient` ignores `action`.
   ///
   /// ```swift
   /// @Environment(\.purchase) private var purchase
@@ -25,8 +26,10 @@ extension PurchaseStore {
     using action: PurchaseAction,
     options: Set<Product.PurchaseOption> = []
   ) async throws(PurchaseError) -> PurchaseOutcome {
-    try await purchase(product, options: options) { product, options in
-      try await action(product, options: options)
-    }
+    try await purchase(
+      product,
+      using: Purchaser { product, options in try await action(product, options: options) },
+      options: options
+    )
   }
 }

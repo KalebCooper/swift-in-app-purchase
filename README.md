@@ -17,8 +17,9 @@ transaction and keeps entitlements current.
   and the store finishes it only after the handler returns, so a consumable is never lost.
 - **Entitlements that stay current.** `isEntitled(to:)` follows renewals, expiry, and refunds on its
   own, and a subscriber in a billing grace period stays entitled.
-- **SwiftUI bridge.** Purchase through the view's `@Environment(\.purchase)`, the only programmatic
-  purchase path on visionOS, and refresh the store whenever the app returns to the foreground.
+- **Purchase where the customer is looking.** Confirm a purchase in a SwiftUI view's
+  `@Environment(\.purchase)`, a `UIScene`, a `UIViewController`, or an `NSWindow`, and refresh the
+  store whenever the app returns to the foreground.
 - **Mock client and previews.** `MockPurchaseClient` drives the store in tests without the App
   Store, and `PurchaseStore.preview` renders locked and unlocked states in a SwiftUI preview.
 
@@ -320,7 +321,7 @@ The long form, with the reasons, is in the articles listed under [Documentation]
 | Non-renewing subscriptions are never owned | They reach the handler like a consumable; the app records and gates on the period itself. |
 | Without a handler, consumables wait | `start()` finishes non-consumables and auto-renewables, leaves consumables and non-renewing subscriptions unfinished with a fault, and `purchase` of one throws `deliveryFailed`. |
 | Gate bundles on their subscriptions | A bundle's own identifier never appears in `purchasedProductIDs`. |
-| visionOS purchases need the scene | `purchase(_:options:)` is unavailable there. Use `purchase(_:using:options:)` from `InAppPurchaseUI`. |
+| visionOS purchases need the scene | `purchase(_:options:)` is unavailable there. Purchase with `confirmIn:` a scene or through `@Environment(\.purchase)`, both from `InAppPurchaseUI`. |
 
 ## Example app
 
@@ -343,7 +344,7 @@ your own development team on the target locally.
 | [Delivering Transactions](Sources/InAppPurchase/InAppPurchase.docc/DeliveringTransactions.md) | The handler contract and each kind of product. |
 | [Gating Features](Sources/InAppPurchase/InAppPurchase.docc/GatingFeatures.md) | Entitlements, grace periods, bundles, non-renewing subscriptions, restore. |
 | [Handling Errors](Sources/InAppPurchase/InAppPurchase.docc/HandlingErrors.md) | `PurchaseError`, the codes an app acts on, load failures. |
-| [Building a Paywall](Sources/InAppPurchaseUI/InAppPurchaseUI.docc/BuildingAPaywall.md) | StoreKit views, custom purchase buttons, visionOS, refreshing on foreground. |
+| [Building a Paywall](Sources/InAppPurchaseUI/InAppPurchaseUI.docc/BuildingAPaywall.md) | StoreKit views, custom purchase buttons, UIKit and AppKit, visionOS, refreshing on foreground. |
 | [Testing Purchases](Sources/InAppPurchaseTesting/InAppPurchaseTesting.docc/TestingPurchases.md) | `MockPurchaseClient`, testing a handler, previews. |
 
 ## Products

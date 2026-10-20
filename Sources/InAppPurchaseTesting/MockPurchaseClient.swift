@@ -26,8 +26,8 @@ public final class MockPurchaseClient: PurchaseClient, Sendable {
     /// The product the store asked to purchase.
     public let product: PurchaseProduct
 
-    /// Whether the store passed a purchase action to confirm the purchase in, as
-    /// `purchase(_:using:options:)` from `InAppPurchaseUI` does.
+    /// Whether the store passed a `Purchaser` to confirm the purchase in a context of the app's
+    /// choosing, as `purchase(_:using:options:)` and `purchase(_:confirmIn:options:)` do.
     public let usesPurchaser: Bool
   }
 

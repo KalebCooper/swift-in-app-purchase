@@ -1,6 +1,7 @@
 # Building a Paywall
 
-Sell through StoreKit's views or through your own, and keep the store current while the app runs.
+Sell through StoreKit's views or your own, in SwiftUI, UIKit, or AppKit, and keep the store current
+while the app runs.
 
 ## Overview
 
@@ -96,12 +97,28 @@ rather than throwing, so the `.userCancelled` error arm is a safeguard, not a pa
 takes. A ``/InAppPurchase/PurchaseError/Code/deliveryFailed`` error means the customer paid and the
 store will deliver again on the next refresh or launch.
 
+### Purchase from UIKit or AppKit
+
+Outside SwiftUI, there is no purchase action to pass. Purchase with
+``InAppPurchase/PurchaseStore/purchase(_:confirmIn:options:)`` instead, naming the `UIScene`,
+`UIViewController`, or `NSWindow` the confirmation sheet should appear in. The app picks the
+context; the scene holding the view that started the purchase is the usual choice:
+
+```swift
+guard let scene = view.window?.windowScene else { return }
+let outcome = try await store.purchase(product, confirmIn: scene)
+```
+
+The outcomes and errors are the same as for the purchase action above. For a context the package
+does not cover, build an ``/InAppPurchase/Purchaser`` around the StoreKit call and pass it to
+``/InAppPurchase/PurchaseStore/purchase(_:using:options:)``.
+
 ### visionOS
 
-On visionOS a purchase needs the scene's `PurchaseAction`, so
-``/InAppPurchase/PurchaseStore/purchase(_:options:)`` is unavailable there. Purchase through
-``InAppPurchase/PurchaseStore/purchase(_:using:options:)`` instead. Purchases made through
-StoreKit's own views need nothing extra.
+On visionOS a purchase needs its scene, so ``/InAppPurchase/PurchaseStore/purchase(_:options:)``
+is unavailable there. Purchase through ``InAppPurchase/PurchaseStore/purchase(_:using:options:)``
+from a SwiftUI view, or ``InAppPurchase/PurchaseStore/purchase(_:confirmIn:options:)`` with the
+scene from UIKit. Purchases made through StoreKit's own views need nothing extra.
 
 ### Refresh when the app returns
 

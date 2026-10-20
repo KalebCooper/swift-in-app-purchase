@@ -202,12 +202,32 @@ public final class PurchaseStore {
   ///   handler and `product` is a consumable or non-renewing subscription; the transaction stays
   ///   unfinished and is delivered again on the next ``refresh()`` or launch. Any error the
   ///   store reported is rethrown.
-  @available(visionOS, unavailable, message: "Use purchase(_:using:options:) from InAppPurchaseUI")
+  @available(
+    visionOS, unavailable,
+    message: "Use purchase(_:confirmIn:options:) or purchase(_:using:options:) from InAppPurchaseUI"
+  )
   public func purchase(
     _ product: PurchaseProduct,
     options: Set<Product.PurchaseOption> = []
   ) async throws(PurchaseError) -> PurchaseOutcome {
     try await purchase(product, options: options, purchaser: nil)
+  }
+
+  /// Purchases `product` with `options` through `purchaser`, so the confirmation sheet appears in
+  /// a context the app chooses. Returns ``PurchaseOutcome/success(_:)`` only after the handler
+  /// delivered the transaction and it was finished.
+  ///
+  /// `InAppPurchaseUI` wraps this for a scene, a view controller, a window, and SwiftUI's
+  /// `@Environment(\.purchase)`. On visionOS, where ``purchase(_:options:)`` is unavailable, this
+  /// is the purchase path. A store backed by `MockPurchaseClient` ignores `purchaser`.
+  ///
+  /// - Throws: The same errors as ``purchase(_:options:)``.
+  public func purchase(
+    _ product: PurchaseProduct,
+    using purchaser: Purchaser,
+    options: Set<Product.PurchaseOption> = []
+  ) async throws(PurchaseError) -> PurchaseOutcome {
+    try await purchase(product, options: options, purchaser: purchaser)
   }
 
   /// Purchases `product` with `options` through `purchaser`, or through the client's own path when

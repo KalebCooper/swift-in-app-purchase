@@ -1,6 +1,7 @@
 import Foundation
 import InAppPurchase
 import InAppPurchaseTesting
+import StoreKit
 import Testing
 
 @MainActor
@@ -405,6 +406,44 @@ import Testing
     } catch {
       #expect(error.code == .unverified)
     }
+  }
+
+  @Test func aPurchaseThroughAPurchaserHandsItToTheClient() async throws {
+    let mock = MockPurchaseClient()
+    let store = makeStore(mock)
+    await store.start()
+
+    _ = try await store.purchase(pro, using: Purchaser { _, _ in .userCancelled })
+
+    #expect(mock.purchaseRequests.last?.usesPurchaser == true)
+  }
+
+  @Test func aPlainPurchaseHandsTheClientNoPurchaser() async throws {
+    let mock = MockPurchaseClient()
+    let store = makeStore(mock)
+    await store.start()
+
+    _ = try await store.purchase(pro)
+
+    #expect(mock.purchaseRequests.last?.usesPurchaser == false)
+  }
+
+  @Test func aSuccessfulPurchaseThroughAPurchaserReturnsAfterDelivery() async throws {
+    let mock = MockPurchaseClient()
+    mock.purchaseResult = .success(.success(lifetime(1)))
+    let recorder = HandlerRecorder(mock: mock)
+    let store = makeStore(mock)
+    await store.start(handling: recorder.handle)
+
+    let outcome = try await store.purchase(pro, using: Purchaser { _, _ in .userCancelled })
+
+    guard case .success(let purchased) = outcome else {
+      Issue.record("expected .success")
+      return
+    }
+    #expect(purchased == lifetime(1))
+    #expect(recorder.events.map(\.purchased) == [lifetime(1)])
+    #expect(mock.finishedTransactions == [lifetime(1)])
   }
 
   // MARK: Entitlements
