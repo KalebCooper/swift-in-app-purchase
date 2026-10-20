@@ -34,14 +34,18 @@ package typealias Sleep = @Sendable (Duration) async throws -> Void
 @MainActor
 @Observable
 public final class PurchaseStore {
-  /// Whether a product load is in progress.
+  /// Whether a product load is in progress. Loads that overlap share one request, so this is
+  /// `true` from the first call until the shared load ends.
   public private(set) var isLoadingProducts = false
-  /// Why the last product load failed, or `nil` if it succeeded or has not run. ``refresh()``
-  /// retries a failed load.
+  /// Why the last product load failed, or `nil` if it succeeded or has not run. It is kept while a
+  /// retry runs and cleared when a load succeeds. ``refresh()`` retries a failed load, and
+  /// ``loadProducts()`` retries on demand.
   public private(set) var loadError: PurchaseError?
   /// The requested product identifiers the store does not sell, as of the last successful load.
+  /// ``refresh()`` loads again while any identifier is missing.
   public private(set) var missingProductIDs: Set<String> = []
-  /// The products on offer, in the order their identifiers were given.
+  /// The products on offer, in the order their identifiers were given, as of the last successful
+  /// load. A failed load leaves them as they were.
   public private(set) var products: [PurchaseProduct] = []
   /// The identifiers of the products the customer currently owns: purchases that are not revoked
   /// or upgraded, and subscriptions the store still reports as current, which includes one in a
@@ -79,6 +83,10 @@ public final class PurchaseStore {
   @ObservationIgnored private var isStarted = false
   @ObservationIgnored private var listenerTask: Task<Void, Never>?
   @ObservationIgnored private let productIDs: [String]
+  /// The product load in flight. The store owns it, so a cancelled caller cannot cut it short, and
+  /// every caller while it runs awaits it instead of starting another.
+  @ObservationIgnored private var productLoad:
+    Task<Result<[PurchaseProduct], PurchaseError>, Never>?
   /// The last delivery queued. The next one runs after it, so handlers never overlap.
   @ObservationIgnored private var queueTail: Task<Bool, Never>?
   /// The newest entitlement read. The store owns it, so a cancelled caller cannot cut it short.
@@ -108,6 +116,7 @@ public final class PurchaseStore {
   isolated deinit {
     listenerTask?.cancel()
     expiryTask?.cancel()
+    productLoad?.cancel()
     recomputeTask?.cancel()
   }
 
@@ -190,7 +199,7 @@ public final class PurchaseStore {
     }
     await recomputeEntitlements()
     await drainUnfinished()
-    await loadProducts()
+    _ = try? await loadProducts()
   }
 
   // MARK: Purchasing
@@ -256,11 +265,12 @@ public final class PurchaseStore {
   // MARK: Refreshing
 
   /// Retries transactions left unfinished, recomputes ``purchasedProductIDs``, and reloads
-  /// ``products`` if the last load failed. Call it when the app returns to the foreground.
+  /// ``products`` if the last load failed or left a requested product missing. Call it when the
+  /// app returns to the foreground.
   public func refresh() async {
     await recomputeEntitlements()
     await drainUnfinished()
-    if loadError != nil { await loadProducts() }
+    if loadError != nil || !missingProductIDs.isEmpty { _ = try? await loadProducts() }
   }
 
   /// Syncs with the store, which may ask the customer to sign in, then recomputes and returns
@@ -413,19 +423,50 @@ public final class PurchaseStore {
 
   // MARK: Products
 
-  private func loadProducts() async {
-    guard !isLoadingProducts else { return }
-    isLoadingProducts = true
-    defer { isLoadingProducts = false }
-    do {
-      let loaded = try await client.products(for: productIDs)
-      let byID = Dictionary(loaded.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-      products = productIDs.compactMap { byID[$0] }
-      missingProductIDs = Set(productIDs).subtracting(byID.keys)
-      loadError = nil
-    } catch {
-      loadError = error
+  /// Loads ``products``, or joins the load already running, and returns them.
+  ///
+  /// On success, ``products`` holds the result in identifier order, ``missingProductIDs`` the
+  /// identifiers the store does not sell, and ``loadError`` is `nil`. On failure, ``loadError``
+  /// holds the error, ``products`` and ``missingProductIDs`` are left as they were, and the error
+  /// is thrown. ``start()`` and ``refresh()`` load this way, so call it only to retry from a
+  /// button, or to load before purchasing a product that is not loaded yet.
+  ///
+  /// A call while a load runs awaits that load's result instead of starting another, and the load
+  /// runs to completion even if the task that started it is cancelled.
+  @discardableResult
+  public func loadProducts() async throws(PurchaseError) -> [PurchaseProduct] {
+    let load: Task<Result<[PurchaseProduct], PurchaseError>, Never>
+    if let running = productLoad {
+      load = running
+    } else {
+      isLoadingProducts = true
+      let client = client
+      let productIDs = productIDs
+      load = Task { @MainActor [weak self] in
+        let result: Result<[PurchaseProduct], PurchaseError>
+        do throws(PurchaseError) {
+          let loaded = try await client.products(for: productIDs)
+          let byID = Dictionary(loaded.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+          result = .success(productIDs.compactMap { byID[$0] })
+        } catch {
+          result = .failure(error)
+        }
+        guard let self else { return result }
+        switch result {
+        case .success(let ordered):
+          products = ordered
+          missingProductIDs = Set(productIDs).subtracting(ordered.map(\.id))
+          loadError = nil
+        case .failure(let error):
+          loadError = error
+        }
+        productLoad = nil
+        isLoadingProducts = false
+        return result
+      }
+      productLoad = load
     }
+    return try await load.value.get()
   }
 }
 

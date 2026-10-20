@@ -739,6 +739,95 @@ import Testing
     #expect(store.products == [small])
   }
 
+  @Test func loadingProductsReturnsThemInTheRequestedOrder() async throws {
+    let mock = MockPurchaseClient()
+    mock.products = [small, pro]
+    let store = makeStore(mock, productIDs: ["pro.lifetime", "tip.small"])
+
+    let loaded = try await store.loadProducts()
+
+    #expect(loaded == [pro, small])
+    #expect(store.products == [pro, small])
+    #expect(store.isLoadingProducts == false)
+  }
+
+  @Test func aFailedLoadThrowsAndKeepsTheProductsAlreadyLoaded() async {
+    let mock = MockPurchaseClient()
+    mock.products = [small]
+    let store = makeStore(mock, productIDs: ["tip.small"])
+    await store.start()
+    mock.productsError = PurchaseError(.networkUnavailable)
+
+    var thrown: PurchaseError?
+    do throws(PurchaseError) {
+      try await store.loadProducts()
+    } catch {
+      thrown = error
+    }
+
+    #expect(thrown?.code == .networkUnavailable)
+    #expect(store.products == [small])
+    #expect(store.loadError?.code == .networkUnavailable)
+    #expect(store.isLoadingProducts == false)
+  }
+
+  @Test func aLoadWhileAnotherRunsJoinsIt() async throws {
+    let mock = MockPurchaseClient()
+    mock.products = [small]
+    let client = GatedProductsClient(mock: mock)
+    let store = PurchaseStore(client: client, productIDs: ["tip.small"])
+
+    let starting = Task { await store.start() }
+    await client.gate.arrival()
+    #expect(store.isLoadingProducts)
+    // The opener inherits the main actor, so it runs only once the joining call suspends.
+    let opener = Task { client.gate.open() }
+    let joined = try await store.loadProducts()
+    await starting.value
+    await opener.value
+
+    #expect(joined == [small])
+    #expect(store.products == [small])
+    #expect(store.isLoadingProducts == false)
+    #expect(client.productsCallCount == 1)
+  }
+
+  @Test func aCancelledCallerDoesNotCutTheLoadShortForOthers() async throws {
+    let mock = MockPurchaseClient()
+    mock.products = [small]
+    let client = GatedProductsClient(mock: mock)
+    let store = PurchaseStore(client: client, productIDs: ["tip.small"])
+
+    let cancelled = Task { try await store.loadProducts() }
+    await client.gate.arrival()
+    cancelled.cancel()
+    let opener = Task { client.gate.open() }
+    let joined = try await store.loadProducts()
+    await opener.value
+
+    #expect(joined == [small])
+    #expect(try await cancelled.value == [small])
+    #expect(store.products == [small])
+    #expect(store.loadError == nil)
+    #expect(store.isLoadingProducts == false)
+    #expect(client.productsCallCount == 1)
+  }
+
+  @Test func refreshReloadsWhenAProductIsMissing() async {
+    let mock = MockPurchaseClient()
+    mock.products = []
+    let store = makeStore(mock, productIDs: ["tip.small"])
+
+    await store.start()
+    #expect(store.missingProductIDs == ["tip.small"])
+
+    mock.products = [small]
+    await store.refresh()
+
+    #expect(store.products == [small])
+    #expect(store.missingProductIDs.isEmpty)
+  }
+
   @Test func entitlementsAreComputedWhenProductsFailToLoad() async {
     let mock = MockPurchaseClient()
     mock.entitlements = [lifetime(1)]

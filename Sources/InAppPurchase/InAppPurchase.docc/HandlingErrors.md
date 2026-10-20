@@ -77,13 +77,35 @@ Report them to the customer; ``PurchaseError/underlying`` carries the detail for
 
 ### Loading products
 
-Loading products does not throw. The store publishes the result instead:
+``PurchaseStore/start()`` and ``PurchaseStore/refresh()`` load products without throwing. The
+store publishes the result instead:
 
 - ``PurchaseStore/isLoadingProducts`` is `true` while a load is in progress.
-- ``PurchaseStore/loadError`` holds why the last load failed, or `nil` once one succeeds.
-  ``PurchaseStore/refresh()`` retries a failed load, so a view can show the error with a Try Again
-  button that calls it.
+- ``PurchaseStore/loadError`` holds why the last load failed, or `nil` once one succeeds. It is
+  kept while a retry runs, so a view can keep showing the error until the retry resolves.
 - ``PurchaseStore/missingProductIDs`` lists the requested identifiers the App Store does not sell,
   as of the last successful load. ``PurchaseStore/products`` leaves them out. A missing identifier
   is usually a typo, a product not yet set up in App Store Connect, or one absent from the StoreKit
-  configuration file the scheme runs with.
+  configuration file the scheme runs with. ``PurchaseStore/refresh()`` loads again while any
+  identifier is missing, so a product that goes on sale after launch appears on the next
+  foreground.
+
+``PurchaseStore/loadProducts()`` loads on demand and throws the failure, for a Retry button, or to
+load before purchasing a product that is not loaded yet. A call while a load runs, such as the one
+``PurchaseStore/start()`` began, awaits that load's result instead of starting another, and a
+failed load keeps the products already loaded:
+
+```swift
+if let error = store.loadError {
+  ContentUnavailableView {
+    Label("Products Unavailable", systemImage: "wifi.exclamationmark")
+  } description: {
+    Text(error.code == .networkUnavailable ? "Check your connection." : "Try again later.")
+  } actions: {
+    Button("Retry") {
+      Task { try? await store.loadProducts() }
+    }
+    .disabled(store.isLoadingProducts)
+  }
+}
+```

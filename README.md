@@ -219,6 +219,20 @@ Source: [Examples/PurchaseExample/PurchaseExample/Coins/CoinDelivery.swift](Exam
 A refunded non-consumable or subscription simply leaves `purchasedProductIDs`; there is nothing to
 undo.
 
+### Retry a failed product load
+
+`start()` loads products after it computes entitlements, and `refresh()` loads again when the last
+load failed or a requested product was missing. To retry from a button, or to load before purchasing
+a product that is not loaded yet, call `loadProducts()`. It returns the products and throws the
+failure; a call while a load runs joins it rather than starting another.
+
+```swift
+Button("Retry") {
+  Task { try? await store.loadProducts() }
+}
+.disabled(store.isLoadingProducts)
+```
+
 ### Restore purchases
 
 Entitlements stay in sync on their own, so restoring is rarely needed. `restore()` can ask the

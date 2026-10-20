@@ -176,6 +176,46 @@ final class GatedEntitlementsClient: PurchaseClient {
   func updates() -> AsyncStream<PurchaseTransaction> { mock.updates() }
 }
 
+/// A client that answers from a mock but holds every `products(for:)` call at a gate before asking
+/// the mock, and counts the calls, so a test can overlap two product loads.
+final class GatedProductsClient: PurchaseClient {
+  /// Holds every product request until opened.
+  let gate = Gate()
+  let mock: MockPurchaseClient
+  private let productsCalls = Mutex(0)
+
+  init(mock: MockPurchaseClient) {
+    self.mock = mock
+  }
+
+  /// How many times `products(for:)` was called.
+  var productsCallCount: Int { productsCalls.withLock { $0 } }
+
+  func currentEntitlements() async -> [PurchaseTransaction] { await mock.currentEntitlements() }
+
+  func finish(_ transaction: PurchaseTransaction) async { await mock.finish(transaction) }
+
+  func products(for ids: [String]) async throws(PurchaseError) -> [PurchaseProduct] {
+    productsCalls.withLock { $0 += 1 }
+    await gate.wait()
+    return try await mock.products(for: ids)
+  }
+
+  func purchase(
+    _ product: PurchaseProduct,
+    options: Set<Product.PurchaseOption>,
+    purchaser: Purchaser?
+  ) async throws(PurchaseError) -> PurchaseOutcome {
+    try await mock.purchase(product, options: options, purchaser: purchaser)
+  }
+
+  func sync() async throws(PurchaseError) { try await mock.sync() }
+
+  func unfinished() async -> [PurchaseTransaction] { await mock.unfinished() }
+
+  func updates() -> AsyncStream<PurchaseTransaction> { mock.updates() }
+}
+
 /// Records what a store's handler is given and how it ran, and can misbehave on request.
 @MainActor
 final class HandlerRecorder {
