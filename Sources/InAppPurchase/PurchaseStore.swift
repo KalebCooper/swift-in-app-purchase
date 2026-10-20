@@ -425,9 +425,12 @@ public final class PurchaseStore {
   /// Whether `transaction` counts as owned. A past `expirationDate` does not rule a subscription
   /// out: the store reports one only while it is current, and keeps reporting it through a billing
   /// grace period, when the paid period has ended but no renewal has been recorded yet.
+  ///
+  /// A consumable never counts: owning one unlocks nothing, so one the store lists while it is
+  /// unfinished must not gate a feature.
   private static func isCurrent(_ transaction: PurchaseTransaction) -> Bool {
     transaction.revocationDate == nil && !transaction.isUpgraded
-      && transaction.productType != .nonRenewable
+      && transaction.productType != .nonRenewable && transaction.productType != .consumable
   }
 
   /// Expiry emits nothing on the updates stream, so the store wakes itself at the earliest one

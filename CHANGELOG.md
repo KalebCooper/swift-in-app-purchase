@@ -6,6 +6,7 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+- A consumable is never counted in `purchasedProductIDs`.
 - Added `PurchaseStore.pendingProductIDs`, the products whose purchase awaits approval, such as an Ask to Buy request.
 - Added `PurchaseStore.loadProducts()`, which loads products or joins the load in progress, returns them, and throws on failure while keeping the products already loaded. `refresh()` now also reloads when a requested product is missing.
 - A `Purchaser` that throws a `PurchaseError` now has that error passed through unchanged, so its code is kept.

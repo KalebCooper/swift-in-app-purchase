@@ -37,8 +37,8 @@ entitlement and it has not been revoked or upgraded:
   instead.
 - Never a non-renewing subscription. See below.
 
-A consumable is something to deliver, not to gate on: grant it in the transaction handler and gate
-on what the app recorded.
+A consumable is never in the set, even while the App Store lists it unfinished. It is something to
+deliver, not to gate on: grant it in the transaction handler and gate on what the app recorded.
 
 The set changes as subscriptions renew, expire, and are refunded. Renewals and refunds arrive as
 transaction updates. Expiry arrives as nothing at all, so the store wakes itself at the earliest

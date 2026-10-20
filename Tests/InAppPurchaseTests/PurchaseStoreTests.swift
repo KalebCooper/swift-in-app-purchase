@@ -655,12 +655,13 @@ private final class ChangeFlag: Sendable {
     #expect(store.purchasedProductIDs == ["pro.lifetime", "pro.monthly"])
   }
 
-  @Test(arguments: ["revoked", "upgraded", "non-renewing"])
+  @Test(arguments: ["revoked", "upgraded", "non-renewing", "consumable"])
   func excludesFromPurchased(_ kind: String) async {
     let mock = MockPurchaseClient()
     switch kind {
     case "revoked": mock.entitlements = [revokedLifetime]
     case "upgraded": mock.entitlements = [upgradedMonthly]
+    case "consumable": mock.entitlements = [tip(1)]
     default: mock.entitlements = [season]
     }
     let store = makeStore(mock)
