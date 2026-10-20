@@ -265,11 +265,14 @@ test runs the app's own delivery code against an in-memory store.
 ```
 Source: [Examples/PurchaseExample/PurchaseExampleTests/CoinDeliveryTests.swift](Examples/PurchaseExample/PurchaseExampleTests/CoinDeliveryTests.swift)
 
-- `entitlements`, `products`, `productsError`, `purchaseResult`, `syncResult`, and
-  `unfinishedTransactions` set what the mock answers.
+- `entitlements`, `products`, `productsError`, `purchaseResult`, `purchaseResults` (per product),
+  `syncResult`, and `unfinishedTransactions` set what the mock answers.
 - `send(_:)` delivers a transaction update to a started store.
+- The mock keeps entitlements as StoreKit does. A purchased or sent non-consumable or auto-renewable
+  subscription joins `entitlements`, replacing the one for its product, a sent revocation leaves
+  them, and every purchased or sent transaction stays in `unfinishedTransactions` until finished.
 - `finishedTransactions` lists what the store finished, and `nextFinishedTransaction()` waits for the
-  next one, so a test never sleeps.
+  next one, so a test never sleeps. `purchaseRequests` records every purchase the store asked for.
 
 ### Preview
 

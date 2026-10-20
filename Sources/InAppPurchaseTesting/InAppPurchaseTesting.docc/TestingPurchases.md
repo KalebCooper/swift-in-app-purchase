@@ -19,7 +19,8 @@ Each property sets one answer the mock gives the store:
   ``/InAppPurchase/PurchaseStore/purchasedProductIDs``.
 - ``MockPurchaseClient/products`` and ``MockPurchaseClient/productsError``: what a product load
   returns or throws.
-- ``MockPurchaseClient/purchaseResult``: how every purchase ends, an outcome or an error.
+- ``MockPurchaseClient/purchaseResult`` and ``MockPurchaseClient/purchaseResults``: how a
+  purchase ends, an outcome or an error, for every product or for one.
 - ``MockPurchaseClient/syncResult``: how ``/InAppPurchase/PurchaseStore/restore()`` ends.
 - ``MockPurchaseClient/unfinishedTransactions``: transactions waiting at launch, which the store
   delivers when it starts. Finishing one removes it.
@@ -64,8 +65,15 @@ more.
 
 ``MockPurchaseClient/send(_:)`` delivers a transaction to a started store as StoreKit does for a
 renewal, a refund, or an approved Ask to Buy request. A transaction sent before the store has
-started is dropped; to model one waiting at launch, put it in
-``MockPurchaseClient/unfinishedTransactions`` instead.
+started reaches no stream but waits in ``MockPurchaseClient/unfinishedTransactions``, as one
+waiting at launch does, so the store delivers it when it starts.
+
+The mock keeps its ledger as StoreKit does, so a test sets up only the state before it acts. Every
+transaction a purchase returns or ``MockPurchaseClient/send(_:)`` delivers joins
+``MockPurchaseClient/unfinishedTransactions`` until the store finishes it. A revocation removes the
+entitlement with its identifier from ``MockPurchaseClient/entitlements``. A non-consumable or
+auto-renewable subscription replaces the entitlement for its product, as a renewal does, or joins
+them. A consumable or non-renewing subscription leaves the entitlements as they are.
 
 An update is delivered asynchronously, so wait for it with
 ``MockPurchaseClient/nextFinishedTransaction()`` rather than sleeping. Each call returns a
@@ -115,9 +123,18 @@ let outcome = try await store.purchase(product)
 ```
 
 Set it to `.failure(PurchaseError(.networkUnavailable))`, or any other code, to test how the app
-reports an error. The mock ignores the `PurchaseAction` passed to
-`purchase(_:using:options:)` from `InAppPurchaseUI`, so a store backed by it purchases the
-same way from a view or a test.
+reports an error. To end one product's purchase differently, set its entry in
+``MockPurchaseClient/purchaseResults``:
+
+```swift
+mock.purchaseResults["pro.lifetime"] = .success(.pending)
+```
+
+``MockPurchaseClient/purchaseRequests`` records every purchase the store asked for, in order, with
+its product and options. The mock ignores the `PurchaseAction` passed to
+`purchase(_:using:options:)` from `InAppPurchaseUI`, so a store backed by it purchases the same
+way from a view or a test; ``MockPurchaseClient/PurchaseRequest/usesPurchaser`` reports whether
+one was passed.
 
 ### Preview
 

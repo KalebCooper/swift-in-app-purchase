@@ -32,6 +32,46 @@ import Testing
     )
   }
 
+  private func tip(_ id: UInt64) -> PurchaseTransaction {
+    transaction(id)
+  }
+
+  private func lifetime(_ id: UInt64) -> PurchaseTransaction {
+    PurchaseTransaction(
+      id: id,
+      productID: "pro.lifetime",
+      productType: .nonConsumable,
+      purchaseDate: Date(timeIntervalSince1970: 1_800_000_000)
+    )
+  }
+
+  private func monthly(_ id: UInt64) -> PurchaseTransaction {
+    let purchaseDate = Date(timeIntervalSince1970: 1_800_000_000 + Double(id) * 2_592_000)
+    return PurchaseTransaction(
+      expirationDate: purchaseDate.addingTimeInterval(2_592_000),
+      id: id,
+      originalID: 1,
+      productID: "pro.monthly",
+      productType: .autoRenewable,
+      purchaseDate: purchaseDate
+    )
+  }
+
+  private func revoked(_ transaction: PurchaseTransaction) -> PurchaseTransaction {
+    PurchaseTransaction(
+      appAccountToken: transaction.appAccountToken,
+      expirationDate: transaction.expirationDate,
+      id: transaction.id,
+      isUpgraded: transaction.isUpgraded,
+      originalID: transaction.originalID,
+      productID: transaction.productID,
+      productType: transaction.productType,
+      purchaseDate: transaction.purchaseDate,
+      quantity: transaction.quantity,
+      revocationDate: transaction.purchaseDate.addingTimeInterval(60)
+    )
+  }
+
   // MARK: Answers what is set
 
   @Test func aNewMockOwnsNothingSellsNothingAndReportsACancelledPurchase() async throws {
@@ -145,7 +185,7 @@ import Testing
     #expect(await updates.next() == transaction(7))
   }
 
-  @Test func aTransactionSentWithNoStreamOpenIsDropped() async {
+  @Test func aTransactionSentWithNoStreamOpenReachesNoStreamButStaysUnfinished() async {
     let mock = MockPurchaseClient()
     mock.send(transaction(8))
     var updates = mock.updates().makeAsyncIterator()
@@ -153,6 +193,7 @@ import Testing
     mock.send(transaction(9))
 
     #expect(await updates.next() == transaction(9))
+    #expect(await mock.unfinished() == [transaction(8), transaction(9)])
   }
 
   @Test func countsTheUpdatesStreamsStillOpen() {
@@ -168,6 +209,83 @@ import Testing
 
     #expect(mock.activeUpdateSubscriptions == 1)
     _ = kept
+  }
+
+  // MARK: Ledger
+
+  @Test func aSuccessfulPurchaseOfANonConsumableJoinsTheEntitlements() async throws {
+    let mock = MockPurchaseClient()
+    mock.purchaseResult = .success(.success(lifetime(1)))
+
+    _ = try await mock.purchase(pro, options: [], purchaser: nil)
+
+    #expect(await mock.currentEntitlements() == [lifetime(1)])
+    #expect(await mock.unfinished() == [lifetime(1)])
+  }
+
+  @Test func aSuccessfulPurchaseOfAConsumableDoesNotJoinTheEntitlements() async throws {
+    let mock = MockPurchaseClient()
+    mock.purchaseResult = .success(.success(tip(1)))
+
+    _ = try await mock.purchase(small, options: [], purchaser: nil)
+
+    #expect(await mock.currentEntitlements().isEmpty)
+    #expect(await mock.unfinished() == [tip(1)])
+  }
+
+  @Test func aSentRenewalReplacesTheEntitlementForItsProduct() async {
+    let mock = MockPurchaseClient()
+    mock.entitlements = [lifetime(1), monthly(1)]
+
+    mock.send(monthly(2))
+
+    #expect(await mock.currentEntitlements() == [lifetime(1), monthly(2)])
+  }
+
+  @Test func aSentRevocationRemovesTheEntitlementWithItsID() async {
+    let mock = MockPurchaseClient()
+    mock.entitlements = [lifetime(1)]
+
+    mock.send(revoked(lifetime(1)))
+
+    #expect(await mock.currentEntitlements().isEmpty)
+    #expect(await mock.unfinished() == [revoked(lifetime(1))])
+  }
+
+  @Test func aSentTransactionIsUnfinishedUntilFinished() async {
+    let mock = MockPurchaseClient()
+
+    mock.send(tip(1))
+    mock.send(tip(1))
+    #expect(await mock.unfinished() == [tip(1)])
+
+    await mock.finish(tip(1))
+    #expect(await mock.unfinished().isEmpty)
+  }
+
+  // MARK: Purchases
+
+  @Test func aPerProductResultOverridesTheDefault() async throws {
+    let mock = MockPurchaseClient()
+    mock.purchaseResults["pro.lifetime"] = .success(.pending)
+
+    let overridden = try await mock.purchase(pro, options: [], purchaser: nil)
+    let defaulted = try await mock.purchase(small, options: [], purchaser: nil)
+
+    if case .pending = overridden {} else { Issue.record("expected .pending") }
+    if case .userCancelled = defaulted {} else { Issue.record("expected .userCancelled") }
+  }
+
+  @Test func recordsEachPurchaseRequest() async throws {
+    let mock = MockPurchaseClient()
+    #expect(mock.purchaseRequests.isEmpty)
+
+    _ = try await mock.purchase(pro, options: [], purchaser: nil)
+    _ = try await mock.purchase(large, options: [.quantity(2)], purchaser: nil)
+
+    #expect(mock.purchaseRequests.map(\.product) == [pro, large])
+    #expect(mock.purchaseRequests.map(\.options) == [[], [.quantity(2)]])
+    #expect(mock.purchaseRequests.map(\.usesPurchaser) == [false, false])
   }
 
   // MARK: Finishes

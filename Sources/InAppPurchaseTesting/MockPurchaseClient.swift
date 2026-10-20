@@ -9,9 +9,28 @@ import Synchronization
 /// finished from ``finishedTransactions`` or await the next finish with
 /// ``nextFinishedTransaction()``.
 ///
+/// The mock keeps its ledger as StoreKit does. A transaction a purchase returns or ``send(_:)``
+/// delivers stays in ``unfinishedTransactions`` until the store finishes it, and changes
+/// ``entitlements``: a revocation removes the entitlement with its identifier, and a
+/// non-consumable or auto-renewable subscription replaces the entitlement for its product or
+/// joins them.
+///
 /// The mock is `Sendable` and its state sits behind a lock, so a test sets and reads it from any
 /// task without hopping actors.
 public final class MockPurchaseClient: PurchaseClient, Sendable {
+  /// One purchase the store asked the mock to make.
+  public struct PurchaseRequest: Sendable {
+    /// The purchase options the store passed, such as a quantity or an app account token.
+    public let options: Set<Product.PurchaseOption>
+
+    /// The product the store asked to purchase.
+    public let product: PurchaseProduct
+
+    /// Whether the store passed a purchase action to confirm the purchase in, as
+    /// `purchase(_:using:options:)` from `InAppPurchaseUI` does.
+    public let usesPurchaser: Bool
+  }
+
   private typealias FinishWaiter = CheckedContinuation<
     Result<PurchaseTransaction, CancellationError>, Never
   >
@@ -23,7 +42,9 @@ public final class MockPurchaseClient: PurchaseClient, Sendable {
     var nextToken = 0
     var products: [PurchaseProduct] = []
     var productsError: PurchaseError?
+    var purchaseRequests: [PurchaseRequest] = []
     var purchaseResult: Result<PurchaseOutcome, PurchaseError> = .success(.userCancelled)
+    var purchaseResults: [String: Result<PurchaseOutcome, PurchaseError>] = [:]
     var syncResult: Result<Void, PurchaseError> = .success(())
     var unfinishedTransactions: [PurchaseTransaction] = []
     var unreturnedFinishes: [PurchaseTransaction] = []
@@ -32,6 +53,26 @@ public final class MockPurchaseClient: PurchaseClient, Sendable {
     mutating func makeToken() -> Int {
       defer { nextToken += 1 }
       return nextToken
+    }
+
+    /// Applies `transaction` to the ledger as the App Store would on issuing it.
+    mutating func record(_ transaction: PurchaseTransaction) {
+      if transaction.revocationDate != nil {
+        entitlements.removeAll { $0.id == transaction.id }
+      } else if transaction.productType == .nonConsumable
+        || transaction.productType == .autoRenewable
+      {
+        // A renewal is a new transaction for the same product. It replaces the entitlement it
+        // renews rather than standing beside it, as StoreKit reports one per product.
+        let index = entitlements.firstIndex { $0.productID == transaction.productID }
+        entitlements.removeAll { $0.productID == transaction.productID }
+        entitlements.insert(transaction, at: index ?? entitlements.endIndex)
+      }
+      if let index = unfinishedTransactions.firstIndex(where: { $0.id == transaction.id }) {
+        unfinishedTransactions[index] = transaction
+      } else {
+        unfinishedTransactions.append(transaction)
+      }
     }
   }
 
@@ -43,6 +84,10 @@ public final class MockPurchaseClient: PurchaseClient, Sendable {
   // MARK: Values a test sets
 
   /// The transactions the customer is entitled to. Empty by default.
+  ///
+  /// A successful purchase or a sent transaction of a non-consumable or auto-renewable
+  /// subscription replaces the entitlement for its product or joins them, and a sent revocation
+  /// removes the entitlement with its identifier.
   public var entitlements: [PurchaseTransaction] {
     get { state.withLock { $0.entitlements } }
     set { state.withLock { $0.entitlements = newValue } }
@@ -61,11 +106,19 @@ public final class MockPurchaseClient: PurchaseClient, Sendable {
     set { state.withLock { $0.productsError = newValue } }
   }
 
-  /// How every purchase ends: an outcome to return or an error to throw. Returns
-  /// ``/InAppPurchase/PurchaseOutcome/userCancelled`` by default.
+  /// How a purchase ends when ``purchaseResults`` has no entry for its product: an outcome to
+  /// return or an error to throw. Returns ``/InAppPurchase/PurchaseOutcome/userCancelled`` by
+  /// default.
   public var purchaseResult: Result<PurchaseOutcome, PurchaseError> {
     get { state.withLock { $0.purchaseResult } }
     set { state.withLock { $0.purchaseResult = newValue } }
+  }
+
+  /// How a purchase of each product ends, by product identifier. A product with no entry ends
+  /// with ``purchaseResult``. Empty by default.
+  public var purchaseResults: [String: Result<PurchaseOutcome, PurchaseError>] {
+    get { state.withLock { $0.purchaseResults } }
+    set { state.withLock { $0.purchaseResults = newValue } }
   }
 
   /// How every sync with the store ends. Succeeds by default.
@@ -74,8 +127,9 @@ public final class MockPurchaseClient: PurchaseClient, Sendable {
     set { state.withLock { $0.syncResult = newValue } }
   }
 
-  /// The transactions the app has not finished, such as purchases waiting at launch. Finishing a
-  /// transaction removes it. Empty by default.
+  /// The transactions the app has not finished, such as purchases waiting at launch. A successful
+  /// purchase or a sent transaction joins them, and finishing a transaction removes it. Empty by
+  /// default.
   public var unfinishedTransactions: [PurchaseTransaction] {
     get { state.withLock { $0.unfinishedTransactions } }
     set { state.withLock { $0.unfinishedTransactions = newValue } }
@@ -86,6 +140,11 @@ public final class MockPurchaseClient: PurchaseClient, Sendable {
   /// Every transaction finished so far, in the order it was finished.
   public var finishedTransactions: [PurchaseTransaction] {
     state.withLock { $0.finishedTransactions }
+  }
+
+  /// Every purchase the store asked for, in the order it asked, including those that threw.
+  public var purchaseRequests: [PurchaseRequest] {
+    state.withLock { $0.purchaseRequests }
   }
 
   /// The number of transaction-update streams still open.
@@ -127,10 +186,14 @@ public final class MockPurchaseClient: PurchaseClient, Sendable {
   /// Delivers `transaction` to every open transaction-update stream, as StoreKit does for a
   /// renewal, a refund, or an approved Ask to Buy request.
   ///
-  /// A transaction sent while no stream is open is dropped. To model one waiting at launch, add it
-  /// to ``unfinishedTransactions`` instead.
+  /// The transaction updates ``entitlements`` and joins ``unfinishedTransactions`` before any
+  /// stream receives it. A transaction sent while no stream is open reaches no stream, but waits
+  /// in ``unfinishedTransactions`` until the store finishes it, as one waiting at launch does.
   public func send(_ transaction: PurchaseTransaction) {
-    let continuations = state.withLock { Array($0.updateContinuations.values) }
+    let continuations = state.withLock { state in
+      state.record(transaction)
+      return Array(state.updateContinuations.values)
+    }
     for continuation in continuations {
       continuation.yield(transaction)
     }
@@ -167,7 +230,20 @@ public final class MockPurchaseClient: PurchaseClient, Sendable {
     options: Set<Product.PurchaseOption>,
     purchaser: Purchaser?
   ) async throws(PurchaseError) -> PurchaseOutcome {
-    try purchaseResult.get()
+    let request = PurchaseRequest(
+      options: options,
+      product: product,
+      usesPurchaser: purchaser != nil
+    )
+    let result = state.withLock { state in
+      state.purchaseRequests.append(request)
+      let result = state.purchaseResults[product.id] ?? state.purchaseResult
+      if case .success(.success(let transaction)) = result {
+        state.record(transaction)
+      }
+      return result
+    }
+    return try result.get()
   }
 
   package func sync() async throws(PurchaseError) {
