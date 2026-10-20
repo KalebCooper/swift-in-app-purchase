@@ -75,6 +75,11 @@ Report them to the customer; ``PurchaseError/underlying`` carries the detail for
   When it is approved, the transaction arrives as an update and goes through the handler.
 - term ``PurchaseOutcome/userCancelled``: The customer dismissed the purchase sheet.
 
+A purchase StoreKit recorded but reported as cancelled or failed, as it can when the app leaves
+the foreground while StoreKit's own confirmation is on screen, still returns
+``PurchaseOutcome/success(_:)``: the store finds the transaction among the unfinished ones and
+delivers it first. See <doc:DeliveringTransactions>.
+
 ### Loading products
 
 ``PurchaseStore/start()`` and ``PurchaseStore/refresh()`` load products without throwing. The

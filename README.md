@@ -176,6 +176,10 @@ rather than offering the purchase again. The set lives in memory only: a relaunc
 decline sends nothing, and purchases started in StoreKit's views are not tracked.
 
 Cancelling the sheet returns `.userCancelled` rather than throwing; the error arm is a safeguard.
+StoreKit can record a purchase and still report it cancelled or failed, as it can when the app
+leaves the foreground while StoreKit's own confirmation is on screen. The store then finds the
+transaction among the unfinished ones, delivers it, and returns `.success`. Only a transaction
+dated at or after the call began counts, so an earlier purchase of the same product never does.
 
 ### Deliver consumables
 

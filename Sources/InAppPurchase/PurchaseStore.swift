@@ -96,6 +96,9 @@ public final class PurchaseStore {
   @ObservationIgnored private var handler: Handler?
   @ObservationIgnored private var isStarted = false
   @ObservationIgnored private var listenerTask: Task<Void, Never>?
+  /// The newest purchase finished in this process for each product, so a purchase whose call ended
+  /// without a transaction can find one the updates stream delivered meanwhile.
+  @ObservationIgnored private var newestFinishedPurchases: [String: PurchaseTransaction] = [:]
   @ObservationIgnored private let productIDs: [String]
   /// The product load in flight. The store owns it, so a cancelled caller cannot cut it short, and
   /// every caller while it runs awaits it instead of starting another.
@@ -221,6 +224,13 @@ public final class PurchaseStore {
   /// Purchases `product` with `options`. Returns ``PurchaseOutcome/success(_:)`` only after the
   /// handler delivered the transaction and it was finished.
   ///
+  /// StoreKit can record a purchase and still end the call cancelled or failed, as it can when the
+  /// app leaves the foreground while StoreKit's own confirmation is on screen. When a purchase ends
+  /// that way, the store collects the transactions left unfinished and recomputes entitlements. If
+  /// that delivered a purchase of `product` made since the call began, the store returns
+  /// ``PurchaseOutcome/success(_:)`` with it instead; otherwise it returns or throws what StoreKit
+  /// reported.
+  ///
   /// - Throws: ``PurchaseError/Code/deliveryFailed`` if the handler threw, or if there is no
   ///   handler and `product` is a consumable or non-renewing subscription; the transaction stays
   ///   unfinished and is delivered again on the next ``refresh()`` or launch. Any error the
@@ -269,7 +279,21 @@ public final class PurchaseStore {
       )
       throw PurchaseError(.unsupported)
     }
-    let outcome = try await client.purchase(product, options: options, purchaser: purchaser)
+    let start = Date()
+    let outcome: PurchaseOutcome
+    do {
+      outcome = try await client.purchase(product, options: options, purchaser: purchaser)
+    } catch {
+      if let recorded = try await recordedPurchase(of: product.id, since: start) {
+        return .success(recorded)
+      }
+      throw error
+    }
+    if case .userCancelled = outcome,
+      let recorded = try await recordedPurchase(of: product.id, since: start)
+    {
+      return .success(recorded)
+    }
     // Mutating a set in place notifies observers even when nothing changes, so check first.
     if case .pending = outcome, !pendingProductIDs.contains(product.id) {
       pendingProductIDs.insert(product.id)
@@ -278,6 +302,40 @@ public final class PurchaseStore {
     guard let delivery = delivery(of: transaction) else { return outcome }
     guard await delivery.value else { throw PurchaseError(.deliveryFailed) }
     return outcome
+  }
+
+  /// Delivers a purchase of the product with `productID` that StoreKit recorded although the
+  /// purchase call reported none, and returns it once finished, or `nil` if there is none.
+  ///
+  /// StoreKit can record a purchase and still end the call cancelled or failed, such as when the
+  /// app leaves the foreground while StoreKit's own confirmation is on screen. Such a purchase does
+  /// not arrive as a transaction update; it waits among the unfinished transactions. Only a
+  /// transaction dated at or after `start` counts, so an earlier purchase of the same product is
+  /// never taken for this one.
+  ///
+  /// - Throws: ``PurchaseError/Code/deliveryFailed`` if such a purchase was found but its delivery
+  ///   failed.
+  private func recordedPurchase(
+    of productID: String,
+    since start: Date
+  ) async throws(PurchaseError) -> PurchaseTransaction? {
+    var deliveries = await drainUnfinished()
+    await recomputeEntitlements()
+    // One delivered from the updates stream while the call ran is already finished, so it is no
+    // longer among the unfinished transactions.
+    if let finished = newestFinishedPurchases[productID] {
+      deliveries.append((finished, true))
+    }
+    let match =
+      deliveries
+      .filter { delivered in
+        delivered.transaction.productID == productID && delivered.transaction.revocationDate == nil
+          && delivered.transaction.purchaseDate >= start
+      }
+      .max { $0.transaction.purchaseDate < $1.transaction.purchaseDate }
+    guard let match else { return nil }
+    guard match.isFinished else { throw PurchaseError(.deliveryFailed) }
+    return match.transaction
   }
 
   // MARK: Refreshing
@@ -371,17 +429,31 @@ public final class PurchaseStore {
     }
     await client.finish(transaction)
     deliveredKeys.insert(key)
+    if transaction.revocationDate == nil,
+      transaction.purchaseDate
+        >= newestFinishedPurchases[transaction.productID]?.purchaseDate ?? .distantPast
+    {
+      newestFinishedPurchases[transaction.productID] = transaction
+    }
     await recomputeEntitlements()
     return true
   }
 
   /// Queues every transaction left unfinished and waits for the deliveries, except from inside the
-  /// handler, whose own delivery is among them: there it only queues them.
-  private func drainUnfinished() async {
+  /// handler, whose own delivery is among them: there it only queues them and returns none.
+  ///
+  /// - Returns: Each transaction delivered, and whether it was finished. One already finished in
+  ///   this process counts as finished.
+  @discardableResult
+  private func drainUnfinished() async -> [(transaction: PurchaseTransaction, isFinished: Bool)] {
     let unfinished = await client.unfinished()
-    let pending = unfinished.compactMap { delivery(of: $0) }
-    guard !Self.isDelivering else { return }
-    for delivery in pending { _ = await delivery.value }
+    let queued = unfinished.map { ($0, delivery(of: $0)) }
+    guard !Self.isDelivering else { return [] }
+    var delivered: [(transaction: PurchaseTransaction, isFinished: Bool)] = []
+    for (transaction, delivery) in queued {
+      delivered.append((transaction, await delivery?.value ?? true))
+    }
+    return delivered
   }
 
   /// Whether owning a product of `type` is its whole content, so the store can finish it with no

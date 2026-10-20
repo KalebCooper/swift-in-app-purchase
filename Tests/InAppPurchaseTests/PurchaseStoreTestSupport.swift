@@ -218,6 +218,41 @@ final class GatedProductsClient: PurchaseClient {
   func updates() -> AsyncStream<PurchaseTransaction> { mock.updates() }
 }
 
+/// A client that answers from a mock but runs `whilePurchasing` inside every purchase call before
+/// the mock answers, as StoreKit records a purchase whose call then ends cancelled or failed.
+final class InterruptedPurchaseClient: PurchaseClient {
+  let mock: MockPurchaseClient
+  private let whilePurchasing: @Sendable () async -> Void
+
+  init(mock: MockPurchaseClient, whilePurchasing: @escaping @Sendable () async -> Void) {
+    self.mock = mock
+    self.whilePurchasing = whilePurchasing
+  }
+
+  func currentEntitlements() async -> [PurchaseTransaction] { await mock.currentEntitlements() }
+
+  func finish(_ transaction: PurchaseTransaction) async { await mock.finish(transaction) }
+
+  func products(for ids: [String]) async throws(PurchaseError) -> [PurchaseProduct] {
+    try await mock.products(for: ids)
+  }
+
+  func purchase(
+    _ product: PurchaseProduct,
+    options: Set<Product.PurchaseOption>,
+    purchaser: Purchaser?
+  ) async throws(PurchaseError) -> PurchaseOutcome {
+    await whilePurchasing()
+    return try await mock.purchase(product, options: options, purchaser: purchaser)
+  }
+
+  func sync() async throws(PurchaseError) { try await mock.sync() }
+
+  func unfinished() async -> [PurchaseTransaction] { await mock.unfinished() }
+
+  func updates() -> AsyncStream<PurchaseTransaction> { mock.updates() }
+}
+
 /// Records what a store's handler is given and how it ran, and can misbehave on request.
 @MainActor
 final class HandlerRecorder {

@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+- Changed `PurchaseStore`'s purchase methods to return `.success` for a purchase StoreKit recorded but reported as cancelled or failed, as it can when the app leaves the foreground while StoreKit's confirmation is on screen. After a purchase returns `.userCancelled` or throws, the store collects unfinished transactions and recomputes entitlements, and returns the delivered purchase of the same product dated at or after the call began, or throws `deliveryFailed` if its delivery failed. An earlier purchase of the product never counts.
+
 ## 0.1.0 - 2026-10-20
 
 - Added `PurchaseStore`, an `@Observable` store that sells through the App Store with `PurchaseStore(productIDs:)`. `start()` and `start(handling:)` start the transaction listener, compute entitlements, retry unfinished transactions, and load products. The handler receives every transaction at least once, one at a time, and the store finishes it only after the handler returns. With no handler, `start()` finishes non-consumables and auto-renewable subscriptions and leaves consumables and non-renewing subscriptions unfinished until `start(handling:)` supplies one. The handler must not call back into the store: a refresh from inside it returns without waiting for deliveries, and a purchase throws `unsupported`.

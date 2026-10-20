@@ -560,6 +560,159 @@ private final class ChangeFlag: Sendable {
     #expect(mock.finishedTransactions == [lifetime(1)])
   }
 
+  // MARK: Recorded purchase
+
+  /// Records `transaction` as StoreKit does for a purchase whose call does not report it: among the
+  /// unfinished transactions and, for a non-consumable, the entitlements, but on no updates stream.
+  private nonisolated static func recordUnreported(
+    _ transaction: PurchaseTransaction,
+    in mock: MockPurchaseClient
+  ) {
+    mock.unfinishedTransactions.append(transaction)
+    if transaction.productType == .nonConsumable { mock.entitlements.append(transaction) }
+  }
+
+  /// A store whose purchase calls record, dated as the call runs, a transaction with `id` for
+  /// `productID` that the call does not report.
+  private func makeStore(
+    _ mock: MockPurchaseClient,
+    recordingUnreported id: UInt64,
+    of productID: String,
+    type: Product.ProductType
+  ) -> PurchaseStore {
+    let client = InterruptedPurchaseClient(mock: mock) {
+      Self.recordUnreported(
+        PurchaseTransaction(id: id, productID: productID, productType: type), in: mock)
+    }
+    return PurchaseStore(client: client, productIDs: ["tip.small", "pro.lifetime"])
+  }
+
+  @Test func aCancelledPurchaseThatStoreKitRecordedReturnsSuccessAfterDelivery() async throws {
+    let mock = MockPurchaseClient()
+    let recorder = HandlerRecorder(mock: mock)
+    let store = makeStore(
+      mock, recordingUnreported: 1, of: "pro.lifetime", type: .nonConsumable)
+    await store.start(handling: recorder.handle)
+
+    let outcome = try await store.purchase(pro)
+
+    guard case .success(let purchased) = outcome else {
+      Issue.record("expected .success")
+      return
+    }
+    #expect(purchased.id == 1)
+    #expect(recorder.events.map(\.purchased?.id) == [1])
+    #expect(mock.finishedTransactions.map(\.id) == [1])
+    #expect(store.purchasedProductIDs == ["pro.lifetime"])
+  }
+
+  @Test func aFailedPurchaseThatStoreKitRecordedReturnsSuccessAfterDelivery() async throws {
+    let mock = MockPurchaseClient()
+    mock.purchaseResult = .failure(PurchaseError(.unknown))
+    let recorder = HandlerRecorder(mock: mock)
+    let store = makeStore(
+      mock, recordingUnreported: 1, of: "pro.lifetime", type: .nonConsumable)
+    await store.start(handling: recorder.handle)
+
+    let outcome = try await store.purchase(pro)
+
+    guard case .success(let purchased) = outcome else {
+      Issue.record("expected .success")
+      return
+    }
+    #expect(purchased.id == 1)
+    #expect(recorder.events.map(\.purchased?.id) == [1])
+    #expect(mock.finishedTransactions.map(\.id) == [1])
+  }
+
+  @Test func aCancelledConsumablePurchaseThatStoreKitRecordedReturnsSuccess() async throws {
+    let mock = MockPurchaseClient()
+    let recorder = HandlerRecorder(mock: mock)
+    let store = makeStore(mock, recordingUnreported: 1, of: "tip.small", type: .consumable)
+    await store.start(handling: recorder.handle)
+
+    let outcome = try await store.purchase(small)
+
+    guard case .success(let purchased) = outcome else {
+      Issue.record("expected .success")
+      return
+    }
+    #expect(purchased.id == 1)
+    #expect(recorder.events.map(\.purchased?.id) == [1])
+    #expect(mock.finishedTransactions.map(\.id) == [1])
+    #expect(store.purchasedProductIDs.isEmpty)
+  }
+
+  @Test func aCancelledPurchaseWithOnlyAnEarlierTransactionStaysCancelled() async throws {
+    let mock = MockPurchaseClient()
+    let earlier = PurchaseTransaction(
+      id: 1,
+      productID: "tip.small",
+      productType: .consumable,
+      purchaseDate: Date(timeIntervalSinceNow: -3600)
+    )
+    let recorder = HandlerRecorder(mock: mock)
+    let store = makeStore(mock)
+    await store.start(handling: recorder.handle)
+    mock.unfinishedTransactions = [earlier]
+
+    let outcome = try await store.purchase(small)
+
+    if case .userCancelled = outcome {} else { Issue.record("expected .userCancelled") }
+    #expect(recorder.events.map(\.purchased) == [earlier])
+    #expect(mock.finishedTransactions == [earlier])
+  }
+
+  @Test func aCancelledPurchaseWithARecordedPurchaseOfAnotherProductStaysCancelled() async throws {
+    let mock = MockPurchaseClient()
+    let recorder = HandlerRecorder(mock: mock)
+    let store = makeStore(mock, recordingUnreported: 1, of: "tip.small", type: .consumable)
+    await store.start(handling: recorder.handle)
+
+    let outcome = try await store.purchase(pro)
+
+    if case .userCancelled = outcome {} else { Issue.record("expected .userCancelled") }
+    #expect(mock.finishedTransactions.map(\.id) == [1])
+  }
+
+  @Test func aRecordedPurchaseWhoseHandlerThrowsFailsWithDeliveryFailed() async {
+    let mock = MockPurchaseClient()
+    let recorder = HandlerRecorder(mock: mock)
+    recorder.error = HandlerFailure()
+    let store = makeStore(mock, recordingUnreported: 1, of: "tip.small", type: .consumable)
+    await store.start(handling: recorder.handle)
+
+    do {
+      _ = try await store.purchase(small)
+      Issue.record("purchase(_:) did not throw")
+    } catch {
+      #expect(error.code == .deliveryFailed)
+    }
+    #expect(mock.finishedTransactions.isEmpty)
+    #expect(mock.unfinishedTransactions.map(\.id) == [1])
+  }
+
+  @Test func aCancelledPurchaseDeliveredAsAnUpdateDuringTheCallReturnsSuccess() async throws {
+    let mock = MockPurchaseClient()
+    let client = InterruptedPurchaseClient(mock: mock) {
+      mock.send(PurchaseTransaction(id: 1, productID: "pro.lifetime", productType: .nonConsumable))
+      _ = try? await mock.nextFinishedTransaction()
+    }
+    let recorder = HandlerRecorder(mock: mock)
+    let store = PurchaseStore(client: client, productIDs: ["pro.lifetime"])
+    await store.start(handling: recorder.handle)
+
+    let outcome = try await store.purchase(pro)
+
+    guard case .success(let purchased) = outcome else {
+      Issue.record("expected .success")
+      return
+    }
+    #expect(purchased.id == 1)
+    #expect(recorder.events.map(\.purchased?.id) == [1])
+    #expect(mock.finishedTransactions.map(\.id) == [1])
+  }
+
   // MARK: Entitlements
 
   private var monthly: PurchaseTransaction {
