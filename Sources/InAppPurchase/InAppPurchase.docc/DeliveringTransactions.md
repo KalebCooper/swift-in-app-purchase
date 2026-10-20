@@ -106,7 +106,7 @@ waiting for deliveries, and a purchase logs a fault and throws ``PurchaseError/C
 
 ### How a purchase returns
 
-``PurchaseStore/purchase(_:options:)`` and the SwiftUI `purchase(_:using:options:)` return
+Every purchase method on the store, including the `InAppPurchaseUI` wrappers, returns
 ``PurchaseOutcome/success(_:)`` only after the handler delivered the transaction and the store
 finished it, so ``PurchaseStore/purchasedProductIDs`` is already current when the call returns. If
 the handler threw, the purchase throws ``PurchaseError/Code/deliveryFailed`` and the transaction is

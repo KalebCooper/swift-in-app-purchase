@@ -100,7 +100,7 @@ store will deliver again on the next refresh or launch.
 ### Purchase from UIKit or AppKit
 
 Outside SwiftUI, there is no purchase action to pass. Purchase with
-``InAppPurchase/PurchaseStore/purchase(_:confirmIn:options:)`` instead, naming the `UIScene`,
+`purchase(_:confirmIn:options:)` instead, naming the `UIScene`,
 `UIViewController`, or `NSWindow` the confirmation sheet should appear in. The app picks the
 context; the scene holding the view that started the purchase is the usual choice:
 
@@ -117,7 +117,7 @@ does not cover, build an ``/InAppPurchase/Purchaser`` around the StoreKit call a
 
 On visionOS a purchase needs its scene, so ``/InAppPurchase/PurchaseStore/purchase(_:options:)``
 is unavailable there. Purchase through ``InAppPurchase/PurchaseStore/purchase(_:using:options:)``
-from a SwiftUI view, or ``InAppPurchase/PurchaseStore/purchase(_:confirmIn:options:)`` with the
+from a SwiftUI view, or `purchase(_:confirmIn:options:)` with the
 scene from UIKit. Purchases made through StoreKit's own views need nothing extra.
 
 ### Refresh when the app returns

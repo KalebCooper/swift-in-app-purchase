@@ -25,6 +25,9 @@ only after the handler returns. Ask whether the customer owns a feature with
 ### State
 
 - ``PurchaseStore``
+
+### Purchasing
+
 - ``Purchaser``
 
 ### Delivering and gating
