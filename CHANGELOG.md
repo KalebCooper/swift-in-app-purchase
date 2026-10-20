@@ -6,6 +6,7 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+- Added the Using the Store Outside SwiftUI article: observing the store with `Observations`, purchasing from UIKit or AppKit, loading a product before buying it, and wrapping the store behind an app's own protocol.
 - A consumable is never counted in `purchasedProductIDs`.
 - Added `PurchaseStore.pendingProductIDs`, the products whose purchase awaits approval, such as an Ask to Buy request.
 - Added `PurchaseStore.loadProducts()`, which loads products or joins the load in progress, returns them, and throws on failure while keeping the products already loaded. `refresh()` now also reloads when a requested product is missing.

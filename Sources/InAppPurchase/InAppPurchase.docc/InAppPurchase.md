@@ -21,6 +21,7 @@ only after the handler returns. Ask whether the customer owns a feature with
 - <doc:DeliveringTransactions>
 - <doc:GatingFeatures>
 - <doc:HandlingErrors>
+- <doc:UsingTheStoreOutsideSwiftUI>
 
 ### State
 

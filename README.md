@@ -258,6 +258,23 @@ private func restore() async {
 ```
 Source: [Examples/PurchaseExample/PurchaseExample/Pro/ProGate.swift](Examples/PurchaseExample/PurchaseExample/Pro/ProGate.swift)
 
+### Use the store from a service
+
+The store needs no SwiftUI. Own one in whatever holds the app's long-lived services, and observe it
+from a view model or service with `Observations`, which yields the current value first, then each
+change, and ends when the iterating task is cancelled.
+
+```swift
+let changes = Observations { store.purchasedProductIDs }
+for await purchased in changes {
+  isPro = purchased.contains("pro.lifetime")
+}
+```
+
+From UIKit or AppKit, purchase with `purchase(_:confirmIn:options:)` from `InAppPurchaseUI`. See
+[Using the Store Outside SwiftUI](Sources/InAppPurchase/InAppPurchase.docc/UsingTheStoreOutsideSwiftUI.md)
+for purchasing without a view, loading a product before buying it, and testing an adapter.
+
 ### Test with the mock
 
 `MockPurchaseClient`, from `InAppPurchaseTesting`, answers the store from values the test sets. This
@@ -363,6 +380,7 @@ your own development team on the target locally.
 | [Delivering Transactions](Sources/InAppPurchase/InAppPurchase.docc/DeliveringTransactions.md) | The handler contract and each kind of product. |
 | [Gating Features](Sources/InAppPurchase/InAppPurchase.docc/GatingFeatures.md) | Entitlements, grace periods, bundles, non-renewing subscriptions, restore. |
 | [Handling Errors](Sources/InAppPurchase/InAppPurchase.docc/HandlingErrors.md) | `PurchaseError`, the codes an app acts on, load failures. |
+| [Using the Store Outside SwiftUI](Sources/InAppPurchase/InAppPurchase.docc/UsingTheStoreOutsideSwiftUI.md) | Owning the store in a service, `Observations`, purchasing from UIKit or AppKit, loading before buying, testing an adapter. |
 | [Building a Paywall](Sources/InAppPurchaseUI/InAppPurchaseUI.docc/BuildingAPaywall.md) | StoreKit views, custom purchase buttons, UIKit and AppKit, visionOS, refreshing on foreground. |
 | [Testing Purchases](Sources/InAppPurchaseTesting/InAppPurchaseTesting.docc/TestingPurchases.md) | `MockPurchaseClient`, testing a handler, previews. |
 
