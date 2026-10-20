@@ -389,7 +389,7 @@ your own development team on the target locally.
 | Product | Add it to |
 |---|---|
 | `InAppPurchase` | Any target that loads products, purchases, or reads entitlements. No UI framework behind it. |
-| `InAppPurchaseUI` | A SwiftUI target that purchases through `@Environment(\.purchase)` or refreshes on foreground. Depends on `InAppPurchase`. |
+| `InAppPurchaseUI` | A SwiftUI target that purchases through `@Environment(\.purchase)` or refreshes on foreground, or a UIKit or AppKit target that purchases with `purchase(_:confirmIn:options:)`. Depends on `InAppPurchase`. |
 | `InAppPurchaseTesting` | A test target, or a target whose SwiftUI previews need `MockPurchaseClient`. Depends on `InAppPurchase`. |
 
 ## Requirements

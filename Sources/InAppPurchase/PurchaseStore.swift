@@ -185,8 +185,8 @@ public final class PurchaseStore {
   /// }
   /// ```
   ///
-  /// `handler` must not call ``refresh()``, ``start(handling:)``, or ``purchase(_:options:)`` on
-  /// the store: its own delivery is at the head of the queue those wait on. From inside it, a
+  /// `handler` must not call ``refresh()``, ``start(handling:)``, or any purchase method on the
+  /// store: its own delivery is at the head of the queue those wait on. From inside it, a
   /// refresh or start recomputes entitlements and returns without waiting for deliveries, and a
   /// purchase logs a fault and throws ``PurchaseError/Code/unsupported``.
   public func start(
