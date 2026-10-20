@@ -100,6 +100,12 @@ import Testing
     #expect(mapped.underlying is CancellationError)
   }
 
+  @Test(arguments: [PurchaseError.Code.networkUnavailable, .userCancelled])
+  func aPurchaseErrorKeepsItsCode(code: PurchaseError.Code) {
+    let mapped = PurchaseError(converting: PurchaseError(code) as any Error)
+    #expect(mapped.code == code)
+  }
+
   @Test func anErrorOfAnotherTypeMapsToUnknownWithNoUnderlyingError() {
     let mapped = PurchaseError(converting: Cause())
     #expect(mapped.code == .unknown)

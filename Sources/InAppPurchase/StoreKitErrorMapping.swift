@@ -37,8 +37,8 @@ extension PurchaseError {
 
   /// Creates the error for `error`, thrown by StoreKit or by a ``Purchaser``.
   ///
-  /// StoreKit throws untyped errors. An error of a type named here is kept as ``underlying``; any
-  /// other becomes ``Code/unknown`` with no underlying error, because it need not be `Sendable`.
+  /// StoreKit throws untyped errors. An error of a type named here is kept as ``underlying``, and a
+  /// `PurchaseError` passes through unchanged; any other becomes ``Code/unknown`` with no underlying error, because it need not be `Sendable`.
   package init(converting error: any Error) {
     switch error {
     case let error as StoreKitError: self.init(storeKitError: error)
@@ -46,6 +46,7 @@ extension PurchaseError {
     case let error as VerificationResult<Transaction>.VerificationError:
       self.init(.unverified, underlying: error)
     case let error as CancellationError: self.init(.unknown, underlying: error)
+    case let error as PurchaseError: self = error
     default: self.init(.unknown)
     }
   }
