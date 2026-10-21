@@ -95,9 +95,10 @@ private func buy() async {
 A purchase cancelled through the sheet returns ``/InAppPurchase/PurchaseOutcome/userCancelled``
 rather than throwing, so the `.userCancelled` error arm is a safeguard, not a path the App Store
 takes. A ``/InAppPurchase/PurchaseError/Code/deliveryFailed`` error means the customer paid and the
-store will deliver again on the next refresh or launch. A purchase StoreKit recorded but reported
-as cancelled or failed, as it can when the app leaves the foreground while StoreKit's own
-confirmation is on screen, is delivered and returns ``/InAppPurchase/PurchaseOutcome/success(_:)``.
+store will deliver again on the next refresh or launch. The outcome is feedback for the button, not
+the source of truth: StoreKit can record a purchase it reported as cancelled or failed, and the
+store still delivers it through the handler. Close a paywall when the entitlement changes rather
+than on ``/InAppPurchase/PurchaseOutcome/success(_:)``.
 
 ### Purchase from UIKit or AppKit
 

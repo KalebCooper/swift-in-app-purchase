@@ -116,16 +116,16 @@ delivered again on the next refresh or launch. The handler's own error is not ca
 A purchase that awaits approval returns ``PurchaseOutcome/pending``. When it is approved, the
 transaction arrives as an update and goes through the handler like any other.
 
-StoreKit can record a purchase and still end the purchase call cancelled or failed, as it can when
-the app leaves the foreground while StoreKit's own confirmation is on screen. Such a purchase does
-not arrive as a transaction update, so after a purchase that returns
-``PurchaseOutcome/userCancelled`` or throws, the store collects the transactions left unfinished and
-recomputes entitlements. If that delivered a purchase of the same product dated at or after the
-moment the call began, the purchase returns ``PurchaseOutcome/success(_:)`` with it instead, or
-throws ``PurchaseError/Code/deliveryFailed`` if its delivery failed. An earlier purchase of the
-product never counts, so cancelling the purchase of a product the customer already owns, or of a
-consumable bought before, still returns ``PurchaseOutcome/userCancelled``. Otherwise the purchase
-returns or throws what StoreKit reported.
+A purchase's outcome is what StoreKit reported for that call, so use it as feedback for the action
+that started it, such as clearing a spinner or showing a message. Gate features on
+``PurchaseStore/purchasedProductIDs`` and deliver content in the handler, both of which follow every
+transaction whenever it arrives. StoreKit can record a purchase and still end the call cancelled or
+failed, as it can when the app leaves the foreground while StoreKit's own confirmation is on screen,
+or report the purchase a few seconds after the call ends. So after a purchase that returns
+``PurchaseOutcome/userCancelled`` or throws, the store delivers the transactions left unfinished and
+recomputes entitlements before it returns, as ``PurchaseStore/refresh()`` does, and leaves the
+outcome as StoreKit reported it. A transaction that arrives later reaches the handler through the
+transaction listener, or on the next refresh or launch.
 
 ### One store per process
 

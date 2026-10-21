@@ -176,10 +176,12 @@ rather than offering the purchase again. The set lives in memory only: a relaunc
 decline sends nothing, and purchases started in StoreKit's views are not tracked.
 
 Cancelling the sheet returns `.userCancelled` rather than throwing; the error arm is a safeguard.
-StoreKit can record a purchase and still report it cancelled or failed, as it can when the app
-leaves the foreground while StoreKit's own confirmation is on screen. The store then finds the
-transaction among the unfinished ones, delivers it, and returns `.success`. Only a transaction
-dated at or after the call began counts, so an earlier purchase of the same product never does.
+The outcome is feedback for the tap, not the source of truth: gate on `isEntitled(to:)` and deliver
+in the handler. StoreKit can record a purchase and still report it cancelled or failed, as it can
+when the app leaves the foreground while StoreKit's own confirmation is on screen. After a
+cancelled or failed purchase the store delivers any unfinished transaction before returning, and a
+transaction StoreKit reports later reaches the handler whenever it arrives, so the entitlement
+follows either way.
 
 ### Deliver consumables
 

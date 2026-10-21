@@ -587,7 +587,7 @@ private final class ChangeFlag: Sendable {
     return PurchaseStore(client: client, productIDs: ["tip.small", "pro.lifetime"])
   }
 
-  @Test func aCancelledPurchaseThatStoreKitRecordedReturnsSuccessAfterDelivery() async throws {
+  @Test func aCancelledPurchaseDeliversWhatStoreKitRecordedBeforeReturning() async throws {
     let mock = MockPurchaseClient()
     let recorder = HandlerRecorder(mock: mock)
     let store = makeStore(
@@ -596,36 +596,32 @@ private final class ChangeFlag: Sendable {
 
     let outcome = try await store.purchase(pro)
 
-    guard case .success(let purchased) = outcome else {
-      Issue.record("expected .success")
-      return
-    }
-    #expect(purchased.id == 1)
+    if case .userCancelled = outcome {} else { Issue.record("expected .userCancelled") }
     #expect(recorder.events.map(\.purchased?.id) == [1])
     #expect(mock.finishedTransactions.map(\.id) == [1])
     #expect(store.purchasedProductIDs == ["pro.lifetime"])
   }
 
-  @Test func aFailedPurchaseThatStoreKitRecordedReturnsSuccessAfterDelivery() async throws {
+  @Test func aFailedPurchaseDeliversWhatStoreKitRecordedThenRethrows() async {
     let mock = MockPurchaseClient()
-    mock.purchaseResult = .failure(PurchaseError(.unknown))
+    mock.purchaseResult = .failure(PurchaseError(.networkUnavailable))
     let recorder = HandlerRecorder(mock: mock)
     let store = makeStore(
       mock, recordingUnreported: 1, of: "pro.lifetime", type: .nonConsumable)
     await store.start(handling: recorder.handle)
 
-    let outcome = try await store.purchase(pro)
-
-    guard case .success(let purchased) = outcome else {
-      Issue.record("expected .success")
-      return
+    do {
+      _ = try await store.purchase(pro)
+      Issue.record("purchase(_:) did not throw")
+    } catch {
+      #expect(error.code == .networkUnavailable)
     }
-    #expect(purchased.id == 1)
     #expect(recorder.events.map(\.purchased?.id) == [1])
     #expect(mock.finishedTransactions.map(\.id) == [1])
+    #expect(store.purchasedProductIDs == ["pro.lifetime"])
   }
 
-  @Test func aCancelledConsumablePurchaseThatStoreKitRecordedReturnsSuccess() async throws {
+  @Test func aCancelledConsumablePurchaseDeliversWhatStoreKitRecorded() async throws {
     let mock = MockPurchaseClient()
     let recorder = HandlerRecorder(mock: mock)
     let store = makeStore(mock, recordingUnreported: 1, of: "tip.small", type: .consumable)
@@ -633,84 +629,36 @@ private final class ChangeFlag: Sendable {
 
     let outcome = try await store.purchase(small)
 
-    guard case .success(let purchased) = outcome else {
-      Issue.record("expected .success")
-      return
-    }
-    #expect(purchased.id == 1)
+    if case .userCancelled = outcome {} else { Issue.record("expected .userCancelled") }
     #expect(recorder.events.map(\.purchased?.id) == [1])
     #expect(mock.finishedTransactions.map(\.id) == [1])
-    #expect(store.purchasedProductIDs.isEmpty)
   }
 
-  @Test func aCancelledPurchaseWithOnlyAnEarlierTransactionStaysCancelled() async throws {
-    let mock = MockPurchaseClient()
-    let earlier = PurchaseTransaction(
-      id: 1,
-      productID: "tip.small",
-      productType: .consumable,
-      purchaseDate: Date(timeIntervalSinceNow: -3600)
-    )
-    let recorder = HandlerRecorder(mock: mock)
-    let store = makeStore(mock)
-    await store.start(handling: recorder.handle)
-    mock.unfinishedTransactions = [earlier]
-
-    let outcome = try await store.purchase(small)
-
-    if case .userCancelled = outcome {} else { Issue.record("expected .userCancelled") }
-    #expect(recorder.events.map(\.purchased) == [earlier])
-    #expect(mock.finishedTransactions == [earlier])
-  }
-
-  @Test func aCancelledPurchaseWithARecordedPurchaseOfAnotherProductStaysCancelled() async throws {
-    let mock = MockPurchaseClient()
-    let recorder = HandlerRecorder(mock: mock)
-    let store = makeStore(mock, recordingUnreported: 1, of: "tip.small", type: .consumable)
-    await store.start(handling: recorder.handle)
-
-    let outcome = try await store.purchase(pro)
-
-    if case .userCancelled = outcome {} else { Issue.record("expected .userCancelled") }
-    #expect(mock.finishedTransactions.map(\.id) == [1])
-  }
-
-  @Test func aRecordedPurchaseWhoseHandlerThrowsFailsWithDeliveryFailed() async {
+  @Test func aRecordedTransactionWhoseHandlerThrowsLeavesTheOutcomeAsReported() async throws {
     let mock = MockPurchaseClient()
     let recorder = HandlerRecorder(mock: mock)
     recorder.error = HandlerFailure()
     let store = makeStore(mock, recordingUnreported: 1, of: "tip.small", type: .consumable)
     await store.start(handling: recorder.handle)
 
-    do {
-      _ = try await store.purchase(small)
-      Issue.record("purchase(_:) did not throw")
-    } catch {
-      #expect(error.code == .deliveryFailed)
-    }
+    let outcome = try await store.purchase(small)
+
+    if case .userCancelled = outcome {} else { Issue.record("expected .userCancelled") }
     #expect(mock.finishedTransactions.isEmpty)
     #expect(mock.unfinishedTransactions.map(\.id) == [1])
   }
 
-  @Test func aCancelledPurchaseDeliveredAsAnUpdateDuringTheCallReturnsSuccess() async throws {
+  @Test func aPendingPurchaseDoesNotCollectUnfinishedTransactions() async throws {
     let mock = MockPurchaseClient()
-    let client = InterruptedPurchaseClient(mock: mock) {
-      mock.send(PurchaseTransaction(id: 1, productID: "pro.lifetime", productType: .nonConsumable))
-      _ = try? await mock.nextFinishedTransaction()
-    }
+    mock.purchaseResult = .success(.pending)
     let recorder = HandlerRecorder(mock: mock)
-    let store = PurchaseStore(client: client, productIDs: ["pro.lifetime"])
+    let store = makeStore(mock, recordingUnreported: 1, of: "tip.small", type: .consumable)
     await store.start(handling: recorder.handle)
 
-    let outcome = try await store.purchase(pro)
+    _ = try await store.purchase(small)
 
-    guard case .success(let purchased) = outcome else {
-      Issue.record("expected .success")
-      return
-    }
-    #expect(purchased.id == 1)
-    #expect(recorder.events.map(\.purchased?.id) == [1])
-    #expect(mock.finishedTransactions.map(\.id) == [1])
+    #expect(recorder.events.isEmpty)
+    #expect(mock.unfinishedTransactions.map(\.id) == [1])
   }
 
   // MARK: Entitlements
