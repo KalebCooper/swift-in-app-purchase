@@ -32,8 +32,46 @@ final class AppServices {
 
 ``PurchaseStore/start(handling:)`` returns once it has computed entitlements, retried the
 transactions left unfinished, and loaded the products, and the transaction listener keeps running
-after it returns. Calling it again refreshes the store and replaces the handler without starting a
-second listener. Releasing the store stops its listener, so keep it for the life of the app.
+after it returns. It starts the listener before anything that can wait, so call it as early in
+launch as the handler can run. Calling it again refreshes the store and replaces the handler without
+starting a second listener. Releasing the store stops its listener, so keep it for the life of the
+app.
+
+### Refresh when the app returns
+
+The listener receives what StoreKit pushes, but expiry, a delivery that failed earlier, and a
+product load that failed send nothing. Call ``PurchaseStore/refresh()`` each time the app returns to
+the foreground. In SwiftUI, `refreshingPurchases(_:)` from `InAppPurchaseUI` does this. Elsewhere,
+observe the app entering the foreground:
+
+```swift
+@MainActor
+final class AppServices {
+  let store = PurchaseStore(productIDs: ["pro.lifetime", "pro.monthly"])
+  private var foregroundObserver: (any NSObjectProtocol)?
+
+  func launch() async {
+    foregroundObserver = NotificationCenter.default.addObserver(
+      forName: UIApplication.willEnterForegroundNotification,
+      object: nil,
+      queue: .main
+    ) { [store] _ in
+      Task { @MainActor in await store.refresh() }
+    }
+    await store.start { event in
+      // Deliver the content once per transaction.id, and save before returning.
+    }
+  }
+}
+```
+
+Observe `willEnterForegroundNotification` rather than `didBecomeActiveNotification`: a system alert
+or sheet, such as StoreKit's own purchase confirmation, makes the app resign and regain active
+without leaving the foreground, and a refresh then would run in the middle of the purchase. A
+refresh that overlaps a purchase is redundant rather than harmful, because a transaction is
+delivered once however many paths find it. AppKit has no foreground notification, so observe
+`NSApplication.didBecomeActiveNotification` there. Never call ``PurchaseStore/restore()`` from such a
+hook: it can ask the customer to sign in.
 
 ### Observe the store
 

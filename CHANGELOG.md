@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 ## 0.2.0 - 2026-10-20
 
+- Changed `refreshingPurchases(_:)` to refresh when the scene returns from the background instead of each time it becomes active, so a system alert or StoreKit's own purchase confirmation no longer triggers a refresh in the middle of a purchase. On macOS, where a window stays active while another app has focus, it still refreshes when the scene becomes active.
+- Added a section on refreshing when the app returns to the foreground from UIKit or AppKit to Using the Store Outside SwiftUI.
 - Changed the log subsystem from `InAppPurchase` to `dev.cooperlabs.InAppPurchase`, and added info-level lines for every entitlement read, with the transactions it returned and whether it was applied or superseded; every transaction update received; every unfinished transaction collected; every finish; and how StoreKit ended each purchase. Lines carry transaction and product identifiers only.
 - Changed `PurchaseStore`'s purchase methods to deliver unfinished transactions and recompute entitlements before returning, after a purchase StoreKit reported as cancelled or failed. StoreKit can record such a purchase, as it can when the app leaves the foreground while its confirmation is on screen, and it now reaches the handler without waiting for the next refresh or launch. The outcome is still what StoreKit reported.
 

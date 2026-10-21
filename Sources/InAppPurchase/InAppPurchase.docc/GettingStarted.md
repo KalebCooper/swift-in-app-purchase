@@ -116,7 +116,7 @@ covers the contract and each kind of product.
 with `@Environment(PurchaseStore.self)`.
 
 `refreshingPurchases(_:)`, from `InAppPurchaseUI`, calls ``PurchaseStore/refresh()`` each time the
-scene becomes active, so a renewal, an expiry, a refund, or a transaction left unfinished is picked
+app returns to the foreground, so a renewal, an expiry, a refund, or a transaction left unfinished is picked
 up when the customer returns to the app. Attach it once, near the root, as above.
 
 ### Gate a view

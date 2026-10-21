@@ -126,12 +126,18 @@ scene from UIKit. Purchases made through StoreKit's own views need nothing extra
 ### Refresh when the app returns
 
 ``SwiftUICore/View/refreshingPurchases(_:)`` calls ``/InAppPurchase/PurchaseStore/refresh()``
-whenever the scene becomes active. A refresh delivers transactions left unfinished, recomputes
+whenever the app returns to the foreground. A refresh delivers transactions left unfinished, recomputes
 entitlements, and retries a product load that failed, so a renewal, an expiry, a refund, or a
 delivery that failed earlier is picked up when the customer comes back to the app.
 
+On iOS, iPadOS, Mac Catalyst, tvOS, visionOS, and watchOS, the refresh runs when the scene leaves
+the background rather than each time it becomes active: a system alert or sheet, such as StoreKit's
+own purchase confirmation, makes the scene inactive without leaving the foreground, and refreshing
+then would run in the middle of the purchase. On macOS, where a window stays active while another
+app has focus, it runs when the scene becomes active.
+
 The first appearance does not refresh, because starting the store already did that work. A refresh
-under way runs to completion even if the scene leaves the active phase, so a delivery is never
+under way runs to completion even if the scene leaves the foreground again, so a delivery is never
 abandoned partway. Attach the modifier once, near the root of the scene. From
 `Examples/PurchaseExample/PurchaseExample/PurchaseExampleApp.swift`:
 

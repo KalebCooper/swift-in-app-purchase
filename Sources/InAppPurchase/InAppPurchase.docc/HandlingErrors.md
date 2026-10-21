@@ -38,7 +38,7 @@ do {
 
 A failed delivery is also retried each time the app returns to the foreground when a view uses
 `refreshingPurchases(_:)` from `InAppPurchaseUI`, which calls ``PurchaseStore/refresh()`` whenever
-the scene becomes active.
+the app returns to the foreground.
 
 The example app's `Pro/PaywallButton.swift` handles a purchase's outcomes and errors in full.
 

@@ -9,7 +9,7 @@ SwiftUI, UIKit, and AppKit integration for a purchase store.
 confirms in a `UIScene`, a `UIViewController`, or an `NSWindow` the app names, so the confirmation
 sheet appears where the customer is looking. On visionOS, where a purchase needs its scene, these
 are the purchase paths. ``SwiftUICore/View/refreshingPurchases(_:)`` refreshes the store whenever
-the scene becomes active.
+the app returns to the foreground.
 
 For a ready-made storefront, use StoreKit's `StoreView`, `ProductView`, or `SubscriptionStoreView`.
 Their purchases reach the store as transaction updates.
